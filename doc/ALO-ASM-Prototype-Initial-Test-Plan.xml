@@ -1,0 +1,433 @@
+<?xml version='1.0'?>
+<!DOCTYPE article PUBLIC "-//OASIS//DTD DocBook XML V4.1.2//EN" [
+
+]>
+
+
+<article>
+  <title>ALO Assembler Prototype --- Initial Test Plan</title>
+
+  <articleinfo>
+
+    <authorgroup>
+      <author>
+	<firstname>David</firstname><surname>Presberg</surname>
+      </author>
+      <collab>
+	<collabname>Jamie Guinan</collabname>
+      </collab>
+      <collab>
+	<collabname>David Robinson</collabname>
+      </collab>
+      <collab>
+	<collabname>Kiran Kumar</collabname>
+      </collab>
+      <corpauthor>
+	Mindspeed Techonologies
+      </corpauthor>
+    </authorgroup>
+
+    <abstract>
+      <para>
+	DOCUMENT CONTROL AND REVISION:
+      </para>
+      <para>
+	$Id: ALO-ASM-Prototype-Initial-Test-Plan.xml,v 1.9 2002/05/14 22:24:51 presberg Exp $
+      </para>
+    </abstract>
+
+    <graphic fileref="MNDSPEED4.png" scale="60" scalefit="1"/>
+
+    <copyright>
+      <year>2002</year>
+      <holder>
+	Mindspeed Technologies, a Conexant Business.
+	<remark>Mindspeed Proprietary Information.  All rights reserved.</remark>
+      </holder>
+    </copyright>
+
+  </articleinfo>
+
+  <section>
+    <title>Overview</title>
+    <para>
+      This document describes the testing strategy for the the Step 1
+      deliverable of the ALO, the new TSP "Assembler Prototype", and
+      identifies a series of development Iterations within that Step.
+      This document has a limited scope and lifetime -- it applies
+      only to this early implementation phase.
+    </para>
+
+    <para>
+      <emphasis>
+	It is anticipated that as the project progresses, this
+	document will become the seed for an expanding Test Plan
+	document.  This will be implemented starting with Step 2,
+	deliverable of an ALO with the additional assembly language
+	features, but not yet performing any "optimizations".  The
+	expanded document will contain all the material of the
+	following sections, "pushed down" into a subsection that
+	corresponds to just the Step 1 testing processes.  New
+	material will be introduced as later sections and subsections,
+	and new overview or introductory information will be
+	provided.
+      </emphasis>
+    </para>
+
+    <para>
+      The following sections of the current document address Unit
+      Testing issues and Functional or System Testing issues.
+    </para>
+  </section>
+
+
+  <section>
+    <title>Unit Testing</title>
+
+    <section>
+      <title>Unit Test Framework</title>
+      <para>
+	The purpose of the unit test framework is to facilitate
+	the testing of all functions and classes. There are two classes
+	which comprise the framework: <computeroutput>Test</computeroutput>
+	and <computeroutput>Suite</computeroutput>. For each "unit",
+	which can be a stand-alone function or class, <computeroutput>
+	Test</computeroutput> is sub-classed. This subclass represents
+	all the unit tests for that unit.
+	<computeroutput>Suite</computeroutput> allows multiple
+	<computeroutput>Test</computeroutput> to be grouped.
+	Both classes, <computeroutput>Test</computeroutput> and
+	<computeroutput>Suite</computeroutput>, also facilitate
+	reporting the results of tests, such as which tests failed,
+        and how many failed or succeeded.
+      </para>
+
+      <para>
+	For more information on the unit test framework, see Chuck Allison's
+	article in the September 2000 issue of C/C++ Users Journal,
+	"The Simplest Automated Unit Test Framework that could Possibly Work."
+      </para>
+
+
+    </section>
+
+
+    <section>
+      <title>Lexical Analyzer</title>
+      <para>
+	The Lexical Analyzer is comprised of the following major
+	functions.  Each will be unit tested.  Details of the
+	individual unit tests will be supplied later in the
+	development process.
+      </para>
+      <para>
+	Functions:
+	<simplelist>
+	  <member>process_line_control_directive</member>
+	  <member>directive_token</member>
+	  <member>identifier_or_keyword_token</member>
+	  <member>structure_reference_token</member>
+	  <member>quoted_string_token</member>
+	  <member>constant_token</member>
+	  <member>text_to_ul</member>
+	  <member>token_error</member>
+	  <member>yyerror</member>
+	</simplelist>
+      </para>
+    </section>
+  
+    <section>
+      <title>Parser</title>
+      <para>
+	The Parser is constructed by a code generator named Bison
+	which is a successor to and has superset capabilities over the
+	Unix Yacc tool.  Its input is a collection of grammar rules.
+	In the current Iteration, generally each rule's action
+	routines are empty. Once the action routines are filled in,
+	the Parser can be unit tested by writing code-coverage test
+	cases that exercise all of the action routine code.  Details
+	of the individual unit tests will be supplied later in the
+	development process.
+      </para>
+    </section>
+
+
+    <section>
+      <title>Driver</title>
+
+      <para>
+	The Driver can be thought of as two separate parts: one that
+	manages its main functionality, and the other that represents
+	errors in the course of running the driver. Details of the
+	individual unit tests will be supplied later in the
+	development process.
+      </para>
+
+      <section>
+	<title>Driver Proper</title>
+
+	<para>
+	  Each of the functions in the main Driver source file
+	  (alodriver.cpp) will have a unit test class associated with
+	  it.
+	</para>
+
+	<para>
+	  Functions:
+	  <simplelist>
+	    <member>main</member>
+	    <member>display_usage</member>
+	    <member>parse_cmd_line_options</member>
+	    <member>get_environment_variable</member>
+	    <member>path_exists</member>
+	    <member>fix_path</member>
+	    <member>get_default_cpp_path</member>
+	    <member>get_maker_root_cpp_path</member>
+	    <member>get_asm_filename</member>
+	    <member>get_basename</member>
+	    <member>get_preprocessed_filename</member>
+	    <member>get_cpp_cmd_line</member>
+	    <member>preprocess_asm_file</member>
+	    <member>do_member</member>
+	    <member>run_preprocessor</member>
+	    <member>parse_preprocessed_file</member>
+	  </simplelist>
+	</para>
+
+      </section>
+
+      <section>
+	<title>Error Classes</title>
+
+	<para>
+	  The Driver uses a hierarchy of classes which represent
+	  various error conditions. Each error class will be unit
+	  tested. As with the Driver proper, details of the individual
+	  unit tests will be supplied later in the development
+	  process.  For each class there will be a
+	  <computeroutput>Test</computeroutput> subclass responsible
+	  for unit testing that particular error class.
+	</para>
+
+	<para>
+	  Error classes:
+	  <simplelist>
+	    <member>Error</member>
+	    <member>EnvVarNotSet</member>
+	    <member>NoInputFileSpecified</member>
+	    <member>InvalidFileName</member>
+	    <member>CmdFailure</member>
+	    <member>CmdGeneralFailure</member>
+	    <member>CmdStartFailure</member>
+	    <member>CmdEndFailure</member>
+	    <member>CppPathNotFound</member>
+	  </simplelist>
+	</para>
+
+
+      </section>
+
+
+    </section>
+
+
+    <section>
+      <title>LLIL Classes</title>
+
+      <para>
+	The following are some of the names of classes defined for the
+	Low Level Intermediate Language (LLIL).  Each class manages
+	the properties and behaviors of one important kind of object
+	in a Low Level Intermediate Representation (LLIR) of the ALO
+	input source file(s) being processed.  Details of the
+	individual unit tests for each class will be supplied later in
+	the development process.
+      </para>
+
+      <para>
+	The following list of classes is only representative of some
+	topmost classes in the ALO Architecture.  For the complete
+	collection of names of classes, see the "ALO Architecture"
+	document.
+      </para>
+
+      <para>
+	LLIL classes:
+
+	<simplelist>
+
+	  <member>LLIR_File</member>
+	  <member>LLIR_Procedure</member>
+	  <member>LLIR_Block</member>
+	  <member>LLIR_Node</member>
+	  
+	  <member>LLIR_Instruction</member>
+	  <member>Octave_Instruction</member>
+	  <member>ALU_OP</member>
+	  <member>DMA_OP</member>
+	  <member>BRANCH_OP</member>
+	  <member>COMPARE_OP</member>
+	  <member>LOAD_OP</member>
+	  <member>MULTI_REG_OP</member>
+	  <member>TSS_OP</member>
+	  <member>BIT_OP</member>
+	  <member>TRAP</member>
+
+	  <member>LLIR_Asm_Directive</member>
+	  <member>LLIR_Line_Control_Directive</member>
+
+	  <member>Type_Table</member>
+	  <member>Type</member>
+	  
+	  <member>Symbol_Table</member>
+	  <member>Symbol</member>
+
+	  <member>LLIR_Operand</member>
+	  <member>Opnd_Memory</member>
+	  <member>Opnd_Flags</member>
+	  <member>Opnd_Unsign_Immed</member>
+	  <member>Opnd_Sign_Immed</member>
+	  <member>Opnd_Expr</member>
+	  <member>Opnd_Label</member>
+	  <member>Opnd_Muti-Reg</member>
+	  <member>Opnd_Register</member>
+
+	</simplelist>
+
+      </para>
+
+    </section>
+
+  </section>
+
+
+  <section>
+    <title>Functional/System Testing</title>
+
+      <section>
+        <title>Lexical Analyzer and Parser (an Early Iteration)</title>
+
+      <para>
+	The initial functional testing establishes that the spelling
+	of all the tokens and the grammar rules used by the ALO Front
+	End match those of the existing TSP Assembler, `mxtas', with
+	respect to all "words" and "lines" in the full Portmaker II
+	source code.  At this early stage of development, there is not
+	yet an ability for the tool to generate any assembly source
+	output.
+      </para>
+
+      <para>
+	Initial testing verifies that the correct `flex' (the Lexical
+	Analyzer Generator tool; "lexer") and `bison' (the Parse
+	Generator tool; "parser") specifications are being used. It
+	will make use of one or more Portmaker II source files
+	(existing `.s' files).  Early on, in the development of ALO
+	Iteration #1, functional testing can be done in part for the
+	the lexer alone by passing Portmaker II source and verifying
+	that no token is rejected.  Later testing of this Iteration
+	(with an integrated lexer and parser, but no Driver) would use
+	both the lexer and the parser together, and would verify that
+	no Portmaker II statement (including all-comment statements)
+	is rejected.
+      </para>
+
+      <para>
+	To accomplish this testing, starting from a source tarball of
+	Portmaker II, the Portmaker "Makefile"-infrastructure will be
+	modified (in the sandbox) to:
+	<itemizedlist>
+	  <listitem><para>
+	      run "by hand" the assembler preprocessor, `as_cpp' over
+	      each `.s' file, preserving the resultant `.i' file.
+	    </para></listitem>
+	  <listitem><para>
+	      then assemble the `.i' file to produce a text file with
+	      the "accept"/"reject" messages from the
+	      early-implementation actions of the lexer and
+	      lexer-plus-parser.  A simple `grep' of the resultant
+	      text files will indicate if the lexer and parser are
+	      working correctly.
+	    </para></listitem>
+	</itemizedlist>
+      </para>
+      
+      <para>
+	To complete all the variations on Portmaker II (in its usual
+	release-form, it builds at least 7 different firmware
+	executables), the Portmaker II "Makefile"-infrastructure must
+	be hand-modified in the sandbox, for instance, to `touch' a
+	target `.eexe' filename so that the full set of (re) builds
+	will proceed automatically.
+      </para>
+    </section>
+
+    <section>
+      <title>Driver</title>
+      <para>
+	When the Driver is integrated with the lexer and parser, less
+	hand-modification will be needed to the Portmaker II
+	"Makefile"-infrastructure.  In particular, there will be no
+	need to drive each instance of preprocessing as a separate
+	step.  All other aspects of Functional Testing at this level
+	will be the same as before.
+      </para>
+
+    </section>
+
+    <section>
+      <title>LLIL Classes</title>
+
+      <para>
+	Integration of the LLIL Classes, including `printf'-like
+	semantic actions for outputting text from the entire Low Level
+	Intermediate Representation (LLIR) of the processing of a
+	single `.s' file, is the next significant stage of testing.
+	With this level of functionality, it should be possible to use
+	the Portmaker II "Makefile"-infrastructure as delivered to
+	customers, effectively as-is.  The testing approach would just
+	substitute the TSP ALO Assembler Prototype tool for the
+	default TSP Assembler tool, with a command-line argument to
+	the Portmaker II build process outermost `make' command.
+      </para>
+
+      <para>
+	Verification that the tool works correctly would involve doing
+	object-dumps (using the TSP standard `objdump' tool) of the
+	generated `.eexe' files (or if needed, intermediate `.o'
+	files) and comparisons of the the dumps against similar dumps
+	taken from `mxtas'-usual builds.
+      </para>
+
+    </section>
+
+    <section>
+      <title>Overall ALO Assembler Prototype</title>
+
+      <para>
+	The final test of this stage of development would again, use
+	Portmaker II source for input, but in this case, the ALO would
+	pass the complete set of Portmaker II source files.  It would
+	verify all source files, include files, and macro expansions
+	from Portmaker II sources yield (`mxtas') assembler source:
+
+	<itemizedlist>
+	  <listitem><para>that is acceptable input to `mxtas' without
+	      any unexpected error- or warning-reports during the
+	      build,</para></listitem>
+	  <listitem><para>assembles and links to a complete Portmaker II
+	      product executable, using `mxtas' and the `make'
+	      invocation for one PM II configuration, for instance AAL5
+	      Bidir, and</para></listitem>
+	  <listitem><para>that executable can be run, e.g., in
+	      simulation, in the context of Cory Sakakeeny's `pmhost'
+	      driver (aka CoryWare).</para></listitem>
+	</itemizedlist>
+
+      </para>
+
+    </section>
+
+  </section>
+
+</article>

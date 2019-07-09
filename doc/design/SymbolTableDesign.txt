@@ -1,0 +1,149 @@
+  1. Purpose
+  ==========
+
+  This document enumerates the rules involved while adding
+  various symbols in the symbol table.
+
+
+  2. NameSpaces
+  =============
+
+  Symbols are always added in the SymbolTable associated 
+  with LlirOctaveBlock. 
+
+  The following types of symbols exist in the symbol table.
+
+      1. Label names
+      2. Symbolic register names
+      3. Block Label names
+      4. Map names
+      5. Type names
+
+  Hence there exists a unique Name Space for symbols.
+  (Namespace: At any scope no two symbols can have 
+  the same name)
+
+  3. Parser and Llir Inteface
+  ============================
+
+  This section specifies methods used by the parser to
+  insert symbols into the symbol table.
+
+  An LlirOctaveBlock can be one of 
+  
+    a)  OctaveImplicitBlock, 
+    b)  OctaveMacroBlock or 
+    c)  OctaveBlock. 
+
+  The above mentioned symbol table exists in every
+  instance of the various blocks created by the parser.
+
+  There is only one instance of OctaveImplicitBlock,
+  and forms the root of the block hierarchy list of nodes,
+  and is created by the parser before processing the
+  input assembly program.
+  
+  In this document the term global/root symbol table 
+  corresponds to an instance of m_symTable 
+  in the OctaveImplicitBlock.
+
+  The LlirOctaveBlock provides the following interface for 
+  addition as well as lookup of various Symbols.
+ 
+ 
+
+  //symbol table support
+  bool                       AddOctaveSymbol(shared_ptr<OctaveSymbol> newSym);
+  shared_ptr<OctaveSymbol>   lookupOctaveSymbol(const char* name);
+  shared_ptr<OctaveSymbol>   lookupOctaveSymbol(shared_ptr<LlirOctaveBlock> block, const char* name);
+  shared_ptr<const Register> lookupRegisterSymbol(const char *name);
+  shared_ptr<const Register> lookupMapNameOrSymReg(const char* refPath);
+  shared_ptr<const Register> lookupMapReferencePath(const char* refPath);
+  shared_ptr<const Type>     lookupType(const char* refPath);      //end pt should be found
+  shared_ptr<const Type>     lookupTypePath(const char* refPath);  //end pt should be struct
+  void                       UnMapSymbol(const char* name);
+
+
+  --------------------------------------------------------------
+  Adding Symbol to Symbol Table
+  --------------------------------------------------------------
+
+  General Rules
+  -------------
+
+  It is assumed that symbol is constructed with valid
+  Name and ScopeQualifier. Throws an exception if the symbol 
+  already exists in the symbol table associated with the block.
+
+  To maintain backward compatibility with existing assembler
+  one more additional restriction has been placed on the namespace
+  rules followed by add symbol routine.
+
+  In order to add a symbol at any scope the routine 
+
+  1. checks to see if another symbol with same name already
+     exists in the same scope.
+
+  2. checks to see if another symbol with same name already
+     exists in the global scope. 
+
+     (Note: This rule was introduced by the firmware team
+     to make sure that arbitrarily instantiated macro
+     and their block scopes do not contain symbols which 
+     hide global symbols with same name).
+
+
+  Some more exceptions:
+  ---------------------
+
+  There is a scope hierarchy possible in the code with the
+  nesting of blocks using .block directive. 
+
+  In ALO input language all symbols except 'Map names' and 'Labels'
+  follow the scope rule that they would be stored in the block
+  scope in which they are declared.
+
+  Map Names:
+  ==========
+
+  Map names declared using .map directive 
+  have global scope and are visible starting from
+  the their 'textual' declaration point to the end of the file.
+  Hence they should to be stored in the global symbol table
+  irrespective of their declaration location. 
+
+  It is for this reason
+  when symbols are created by the parser they are annotated 
+  with the scope at which they should be stored. 
+  
+  For example
+  a SymbolicRegister would be annotated with LOCAL scope
+  and add symbol routine would always store it in
+  the current scope (current block's symbol table). Similary
+  MapNames would be annotated with FILESCOPE scope and would
+  be stored in the root symbol table.
+
+  Labels:
+  =======
+
+  One more exception exists with respect to Labels.
+
+  A label declaration decides the scope at which the label
+  should be stored.
+
+  Local Label         <Identifier> ':'  
+  Global Label        <Identifier> ':' ':'
+  File scope Label    <Identifier> ':' '='
+
+  The following rules have to be followed when inserting a label symbol 
+  for backward compatibility with the existing assembler.
+  
+      1. Local Label Symbol declaration cannot hide the 
+         either Global or FileScope Label symbol declaration.
+
+      2. Global or FileScope Label Symbol declaration cannot 
+         hide the Local Label Symbol declaration
+
+      3. Local Label Symbol declaration in an inner block can 
+         hide the Local Label symbol in the parent blocks 
+         the same name.

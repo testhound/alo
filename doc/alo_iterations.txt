@@ -1,0 +1,77 @@
+$Id: alo_iterations.txt,v 1.2 2002/03/28 17:18:37 guinanjs Exp $
+
+ALO Iteration #1.
+
+  This iteration of the ALO must be able to do the following:
+
+  . Parse the current assembly language. [1]
+  . Digest 100% of the Portmaker2 source code.
+  . Perform 'printf' output for debugging and validation. 
+    It must emit output suitable for feeding to the "mxtas" 
+    assembler.
+
+  [1] While designing the parser, we may implement parsing for
+  features that don't exist in the "mxtas" assembler, but the new
+  features should not be incompatible with existing syntax.
+
+
+ALO Iteration #2.
+
+  This iteration of the ALO will do the following:
+
+  . Freeze the ALO language definition.
+  . Define and generate the LLIL (low level intermediate language).
+  . Generate ".s.llil" code from the LLIL.  This code should able
+    to pass through the mxtas assembler.
+
+
+ALO Iteration #3.
+
+  This iteration of the ALO will do the following:
+
+  . Implement the the features and enhancements that were agreed to
+    with the TSP firmware team.
+  
+  At this stage, we should be able to deliver an ALO to the
+  TSP firmware team that implements the "prioritized proposed
+  features" that we have been discussing for the past several
+  months.
+
+  This iteration will be broken down into sub-parts so that we can
+  more accurately schedule it.  In each part, a subset of the
+  "prioritized proposed assembler features" as negotiated with the
+  firmware team will be implemented.  The final iteration should
+  implement all of the top-priority features.
+
+
+  Iteration #3.1
+
+    . assert() operator
+    . .assert, .warning, and .error
+    . depb and extb syntax
+
+
+  Iteration #3.2
+
+    . Structure/register-range equivalence
+    . Register-range/single-register equivalence
+    . Structure and instance operators
+
+
+  Iteration #3.3
+
+    . Conditional directives
+    . Non-Preprocessor Macro Facility
+    . .meets directive
+    . .map Support for Register Ranges
+
+
+
+
+ALO Iteration #4.
+
+  This iteration of the ALO will do the following:
+
+  . Delay slot unfilling.
+  . Perform transformations to convert input ".tsp" source
+    into a form suitable for RTL.

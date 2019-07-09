@@ -1,0 +1,38 @@
+#!/usr/bin/env python
+#
+#  The code has been  written to be compatible with more recent
+#  versions of Bison (1.35+).  The older versions of Bison
+#  are a bit sloppy with the generated .tab.h files, so this
+#  script cleans them up, if it decides cleaning up necessary.
+#
+
+import sys
+import string
+import os
+
+f = open(sys.argv[1])
+contents = f.readlines()
+f.close()
+
+if string.find(contents[0], "#ifndef") == 0:
+    # Ok, do nothing
+    pass
+else:
+    for i in range(len(contents)):
+        if string.find(contents[i], "} YYSTYPE;") == 0:
+            contents[i] = "} yystype;\n"
+            contents.insert(i+1, '#define YYSTYPE yystype\n')
+            break
+
+    f = open(sys.argv[1] + '_new', 'w')
+    sentinel = string.replace(sys.argv[1], '.', '_')
+    sentinel = string.replace(sentinel, '-', '_')
+    sentinel = string.replace(sentinel, '/', '_')
+    sentinel = string.upper(sentinel)
+    f.write('#ifndef %s\n' % sentinel)
+    f.write('# define %s\n' % sentinel)
+    f.write('\n')
+    f.writelines(contents)
+    f.write('#endif /* not %s */\n' % sentinel)
+    os.rename (sys.argv[1] + '_new', sys.argv[1])
+

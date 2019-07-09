@@ -1,0 +1,7 @@
+ALO_ITERATION_2_2	Thu Sep 26 16:27:14 EDT 2002
+Changes:
+	1. Support for depb/extb extended syntax.
+	2. Makefile updates.
+	3. Support for Solaris build (included libiberty).
+
+

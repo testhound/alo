@@ -1,0 +1,2624 @@
+/* -*- mode:C -*-
+ * m480-specific file.  Syntax is identical to standard .y file, but
+ * each section is *combined* with the contents of the corresponding 
+ * section in alolang.y.in (by an external script).
+ */
+
+%{
+/* C (and C++ in our case) #include's and declarations */
+
+namespace Alo
+{
+  //current function for which rtl is being generated.
+  shared_ptr<AltEntryFunction> g_currentAltEntryFn;
+  shared_ptr<LlirNode> g_currentAltEntryFnEnd;
+  shared_ptr<JtableBegin> g_currentJtableBegin;
+  MemoryLinksListContainer *g_currentMLC;
+}
+
+//list of all prototypes seen so far.
+ std::map<string, shared_ptr<const PrototypeDirective> > g_prototypeDirList;
+  
+
+extern "C"
+{
+  extern void gcc_init_entry(const char*, unsigned int[], unsigned int[], unsigned int[], unsigned int[]);
+  extern void gcc_end_entry();
+  extern void gcc_emit_global_asm_directive(const char*);
+}
+
+/* .evh and .entry block support */
+static void create_evh(shared_ptr<MultipleEntryEvh>);
+static void end_evh(const char*);
+static void create_entry(shared_ptr<MultipleEntryFunction>);
+static void end_entry(const char*);
+
+void gcc_init_function(shared_ptr<const AltEntryFunction> e);
+void gcc_finish_function();
+void gcc_emit_final_global_asm_directives();
+extern void do_end_smap (shared_ptr<LlirOctaveBlock> block);
+
+/* Block-oriented semantic enforcement */
+enum BlockThing { NONE_BLOCK, EVH_BLOCK, ENTRY_BLOCK, BLOCK_BLOCK };
+static map<int, const char *> block_thing_names;
+static stack<BlockThing> nesting_stack;
+
+
+bool in_evh = false;
+bool in_entry = false;
+bool in_jtable = false;
+
+bool optimizing = false;	/* FIXME: This should go away when we split off the .y files. */
+extern int optimize;		/* Defined in gcc/gcc/toplev.c */
+
+static bool noopt_active = false;
+
+void do_sregister(const char *sreg_name, AbstractSymReg::SymRegConstraint reg_constriant, shared_ptr<const Register> constraint_reg_range);
+void do_scoped_mapping(TypeContainer *tc, const char *mapname, AbstractSymReg::SymRegConstraint reg_constriant, shared_ptr<const Register> constraint_reg_range);
+
+
+static inline void parse_begin_hook()
+{
+  if (optimize)
+    {
+      optimizing = true;
+    }
+
+  block_thing_names[NONE_BLOCK] = "<NONE>";
+  block_thing_names[EVH_BLOCK] = ".evh";
+  block_thing_names[ENTRY_BLOCK] = ".entry";
+  block_thing_names[BLOCK_BLOCK] = ".block";
+}
+
+static inline void parse_done_hook()
+{
+#ifdef GCCBUILD
+  if(optimizing)
+    {
+      gcc_emit_global_asm_directive("\n");
+      parseAlo->generateRTL(g_rootBlock);
+      gcc_emit_global_asm_directive("\n");
+    }
+#endif
+}
+
+%}
+
+/* TOKENS */
+%token <ul_value> GLOBAL_TOKEN
+%token <ul_value> EVH_TOKEN
+%token <ul_value> END_EVH_TOKEN
+%token <ul_value> ENTRY_TOKEN
+%token <ul_value> END_ENTRY_TOKEN
+%token <ul_value> PROTOTYPE_TOKEN
+%token <ul_value> AT_INDIRECT_CALL_TOKEN
+%token <ul_value> AT_ARGS_TOKEN
+%token <ul_value> AT_RESULTS_TOKEN
+%token <ul_value> AT_SCRATCH_TOKEN
+%token <ul_value> AT_LINKED_TOKEN
+%token <ul_value> AT_LINKED_SP_TOKEN
+%token <ul_value> AT_LINKED_LOCKED_SP_TOKEN
+%token <ul_value> AT_LINKED_SD_TOKEN
+%token <ul_value> AT_LINKED_SR_TOKEN
+%token <ul_value> AT_LINKED_CC_TOKEN
+%token <ul_value> AT_LINKED_LOCKED_CC_TOKEN
+%token <ul_value> AT_LINKED_SIO_TOKEN
+%token <ul_value> AT_NO_LINKS_TOKEN
+%token <ul_value> AT_LNK1_TOKEN
+%token <ul_value> AT_LNK2_TOKEN
+%token <ul_value> AT_LNK3_TOKEN
+%token <ul_value> AT_TAKEN
+%token <ul_value> AT_NOT_TAKEN
+%token <ul_value> AT_EVEN_TOKEN
+%token <ul_value> AT_ODD_TOKEN
+
+%token <ul_value> NO_REORDER_TOKEN
+%token <ul_value> END_NO_REORDER_TOKEN
+
+%token <ul_value> JBCI_TOKEN
+%token <ul_value> JBCR_TOKEN
+%token <ul_value> JBCDI_TOKEN
+%token <ul_value> JBCDR_TOKEN
+%token <ul_value> JBI_TOKEN
+%token <ul_value> JBNZR_TOKEN
+%token <ul_value> JBNZI_TOKEN
+%token <ul_value> JBR_TOKEN
+%token <ul_value> JBRS_TOKEN
+%token <ul_value> JBRSL_TOKEN
+%token <ul_value> JBZR_TOKEN
+%token <ul_value> JBZI_TOKEN
+%token <ul_value> JCMP_TOKEN
+%token <ul_value> JCMPI_TOKEN
+%token <ul_value> JRINT_TOKEN
+%token <ul_value> JRNMI_TOKEN
+%token <ul_value> JTCLRB_TOKEN
+%token <ul_value> JTSETB_TOKEN
+%token <ul_value> JADDL_TOKEN
+%token <ul_value> JADDLI_TOKEN
+%token <ul_value> JADDWH_TOKEN
+%token <ul_value> JADDWHI_TOKEN
+%token <ul_value> JADDWL_TOKEN
+%token <ul_value> JADDWLI_TOKEN
+%token <ul_value> JADDWW_TOKEN
+%token <ul_value> JADDWWI_TOKEN
+%token <ul_value> JSUBL_TOKEN
+%token <ul_value> JSUBLI_TOKEN
+%token <ul_value> JSUBWH_TOKEN
+%token <ul_value> JSUBWHI_TOKEN
+%token <ul_value> JSUBWL_TOKEN
+%token <ul_value> JSUBWLI_TOKEN
+%token <ul_value> JSUBWW_TOKEN
+%token <ul_value> JSUBWWI_TOKEN
+%token <ul_value> JTABLEBR_TOKEN
+%token <ul_value> JTABLE_BEGIN_TOKEN
+%token <ul_value> JTABLE_END_TOKEN
+%token <ul_value> JTABLEBR_RELATIVE_TOKEN
+%token <ul_value> JTABLE_RELATIVE_BEGIN_TOKEN
+%token <ul_value> JTABLE_RELATIVE_END_TOKEN
+%token <ul_value> JHEC5_TOKEN
+
+%token <ul_value> PUTC_TOKEN
+%token <ul_value> PUTD_TOKEN
+%token <ul_value> PUTP_TOKEN
+
+/* Enhanced variants of LINK, LMM, SMM, which supply extra semantic information to GCC. */
+%token <ul_value> LINKSP_TOKEN
+%token <ul_value> LINKSPL_TOKEN
+%token <ul_value> LINKSR_TOKEN
+%token <ul_value> LINKSD_TOKEN
+%token <ul_value> LINKCC_TOKEN
+%token <ul_value> LINKCCL_TOKEN
+%token <ul_value> LINKSIO_TOKEN
+
+%token <ul_value> LMMSP_TOKEN
+%token <ul_value> LMMSPL_TOKEN
+%token <ul_value> LMMSR_TOKEN
+%token <ul_value> LMMSD_TOKEN
+%token <ul_value> LMMCC_TOKEN
+%token <ul_value> LMMCCL_TOKEN
+%token <ul_value> LMMSI_TOKEN
+
+%token <ul_value> SMMSP_TOKEN
+%token <ul_value> SMMSPL_TOKEN
+%token <ul_value> SMMSR_TOKEN
+%token <ul_value> SMMSD_TOKEN
+%token <ul_value> SMMCC_TOKEN
+%token <ul_value> SMMCCL_TOKEN
+%token <ul_value> SMMSI_TOKEN
+
+%type <opt_reg_constr> optional_reg_constraints
+%type <begin_reg_constr> begin_reg_constraint
+
+%type <text> dot_expr
+
+%type <reg_lst> register_list
+%type <mem_lnk_lst> mem_link_reg_spec_list
+%type <lnk_lst> link_reg_spec
+%type <lab_lst> label_list
+%type <ind_call_list> opt_indirect_call
+%type <probability> opt_br_prob
+%type <args_lst> args_list 
+%type <res_lst> results_list 
+%type <sc_lst> scratch_list
+
+
+%union
+{
+  unsigned long ul_value;
+  long l_value;
+  char *text;
+  OptionalModAbcContainer *opt_mod_abc;
+  OptionalAbcContainer *opt_abc;
+  OptionalDepbFlagContainer *opt_depb;
+  OptionalSignFlagContainer *opt_sign;
+  OptionalCycsFlagContainer *opt_cycs;
+  OptionalBranchDispContainer *opt_branch_disp;
+  OptionalBranchDispWithAbcContainer* opt_branch_disp_abc;
+  OptionalHecFlagContainer *opt_hec;
+  OptionalSxFlagContainer *opt_sx;
+  OptionalDiFlagContainer *opt_di;
+  OptionalRegContainer *opt_reg;
+  OptionalAbcCompareSignContainer *opt_abc_compare_sign;
+  OptionalAbcZbitContainer *opt_abc_zb;
+  OptionalNumBitsContainer *opt_numbits;
+  OptionalModAbcCompareContainer *opt_mod_abc_compare;
+  OptionalLnkFlagContainer *opt_lnk;
+  RegContainer *reg;
+  OctaveInsnContainer *insn;
+  ExpContainer *ex;
+  OptionalPipeDepthContainer *pipedepth;
+  CondBranchFlagsContainer *cbflags;
+  TrafficSchedFlagsContainer *tssflags;
+  ImmedBranchArgsContainer *bi_args;
+  BrslArgsContainer *brsl_args;
+  EssContainer *ess;
+  MultiRegArgsContainer *multireg_args;
+  SmmArgsContainer *smm_args;
+  BitopArgsContainer *bitop_args;
+  DepbiArgsContainer *depbi_args;
+  TestArgsContainer *test_args;
+  ParseConstruct parse_construct;
+  StructContainer *dot_struct;
+  TypeContainer *type;
+  OptionalIndirectCallTargetList *ind_call_list;
+  OptionalBranchProbability *probability;
+
+  OptionalRegConstraints *opt_reg_constr;
+  AbstractSymReg::SymRegConstraint begin_reg_constr;
+
+  OctaveFactory::Ess of_ess;
+  OctaveFactory::Mod of_mod;
+  OctaveFactory::Mvh of_mvh;
+
+  RegListContainer     *reg_lst;
+  RegListContainer     *args_lst;
+  RegListContainer     *res_lst;
+  RegListContainer     *sc_lst;
+  
+  MemoryLinksListContainer *mem_lnk_lst;
+  LinksListContainer *lnk_lst;
+  LabelListContainer       *lab_lst;
+
+}
+
+%%
+/* Grammar rules.  */
+
+instruction: processor_instruction  
+             {
+
+
+#if 0	       
+
+	       //This check is no longer needed now that
+	       //we have the additional facility of freely
+	       //mixing optimizable and non-optimizable code
+	       //within the same file. Instructions will be 
+	       //optimized only if option -O is specified and 
+	       //are demarked within .evh and .endevh boundaries
+	       //with valid syntatic annotations.
+	       
+	       if (optimizing && (!(in_evh || in_entry)))
+		 {
+		   throw ParseError("instructions must be contained in .evh or .entry blocks when optimizing",
+				    get_src_line(), 
+				    get_src_file(),
+				    __LINE__,
+				    __FILE__);
+		 }
+
+#endif
+
+
+	       if (noopt_active)
+		 {
+		   $1->insnPtr->setInInstructionSequence();
+		 }
+
+	       g_currentBlock->addLlirNode(g_currentBlock, $1->insnPtr);
+             }
+          ;
+
+
+assembler_directive : top_level_structure_definition 
+                      { 
+                      }
+                    | generic_assembler_directive
+		      {
+		      }
+
+	            /* The rest of these are machine-specific... */
+                    | EVH_TOKEN label_list args_list results_list scratch_list mem_link_reg_spec_list newline
+                      {
+
+#ifdef GCCBUILD
+			if(optimizing)
+			  {
+			    //emit asm_directives from begin of the file or
+			    //from the end of last function/evh 
+			    gcc_emit_global_asm_directive("\n");
+			    parseAlo->generateRTL(g_rootBlock);
+			    gcc_emit_global_asm_directive("\n");
+			  }
+#endif
+
+			shared_ptr<MultipleEntryEvh> evh = 
+			  llirFactory->createMultipleEntryEvh(get_node_line(), 
+							      get_src_line(),
+							      get_src_file(),
+							      $2->labelList, 
+							      shared_ptr<ArgList> (new ArgList($3->regList)),
+							      shared_ptr<ResultList> (new ResultList($4->regList)),
+							      shared_ptr<ScratchList> (new ScratchList($5->regList)),
+							      shared_ptr<RegLnksListToSPRAM> (new RegLnksListToSPRAM($6->lnkSPList1,
+														     $6->lnkSPList2,
+														     $6->lnkSPList3)),
+							      shared_ptr<RegLnksListToLockedSPRAM> (new RegLnksListToLockedSPRAM($6->lnkLockedSPList1,
+																 $6->lnkLockedSPList2,
+																 $6->lnkLockedSPList3)),
+							      shared_ptr<RegLnksListToSRAM> (new RegLnksListToSRAM($6->lnkSRList1,
+														   $6->lnkSRList2,
+														   $6->lnkSRList3)),
+							      shared_ptr<RegLnksListToSDRAM> (new RegLnksListToSDRAM($6->lnkSDList1,
+														     $6->lnkSDList2,
+														     $6->lnkSDList3)),
+							      shared_ptr<RegLnksListToCCRAM> (new RegLnksListToCCRAM($6->lnkCCList1,
+														     $6->lnkCCList2,
+														     $6->lnkCCList3)),
+							      shared_ptr<RegLnksListToLockedCCRAM> (new RegLnksListToLockedCCRAM($6->lnkLockedCCList1,
+																 $6->lnkLockedCCList2,
+																 $6->lnkLockedCCList3)),
+							      shared_ptr<RegLnksListToSIO> (new RegLnksListToSIO($6->lnkSIOList1,
+														 $6->lnkSIOList2,
+														 $6->lnkSIOList3)));
+			create_evh(evh);
+#ifdef GCCBUILD
+			gcc_init_function(evh);
+#endif
+
+		      }
+                    | END_EVH_TOKEN IDENTIFIER_TOKEN
+                      {
+			end_evh($2);
+
+#ifdef GCCBUILD
+			gcc_finish_function();
+#endif
+
+                      }
+                    | ENTRY_TOKEN label_list
+                      {
+			
+#ifdef GCCBUILD
+			if(optimizing)
+			  {
+			    //emit asm_directives from begin of the file or
+			    //from the end of last function/evh 
+			    gcc_emit_global_asm_directive("\n");
+			    parseAlo->generateRTL(g_rootBlock);
+			    gcc_emit_global_asm_directive("\n");
+			  }
+#endif
+
+			shared_ptr<const PrototypeDirective> proto = searchForValidPrototype($2->labelList);
+			
+			shared_ptr<MultipleEntryFunction> fn = 
+			  llirFactory->createMultipleEntryFunction(get_node_line(), 
+								   get_src_line(),
+								   get_src_file(),
+								   $2->labelList, 
+								   proto->getArgList(),
+								   proto->getResultList(),
+								   proto->getScratchList(),
+								   proto->getRegLnksListToSPRAM(),
+								   proto->getRegLnksListToLockedSPRAM(),
+								   proto->getRegLnksListToSRAM(),
+								   proto->getRegLnksListToSDRAM(),
+								   proto->getRegLnksListToCCRAM(),
+								   proto->getRegLnksListToLockedCCRAM(),
+								   proto->getRegLnksListToSIO());
+			create_entry(fn);
+
+#ifdef GCCBUILD
+			gcc_init_function(fn);
+#endif
+
+                      }
+                    | END_ENTRY_TOKEN IDENTIFIER_TOKEN
+                      {
+			end_entry($2);
+
+#ifdef GCCBUILD
+			gcc_finish_function();
+#endif
+
+                      }
+                    | PROTOTYPE_TOKEN label_list args_list results_list scratch_list mem_link_reg_spec_list
+                      {
+
+			shared_ptr<LlirNode> protoDir = 
+			  llirFactory->createPrototypeDirective(get_node_line(), 
+								get_src_line(),
+								get_src_file(),
+								$2->labelList, 
+								shared_ptr<ArgList> (new ArgList($3->regList)),
+								shared_ptr<ResultList> (new ResultList($4->regList)),
+								shared_ptr<ScratchList> (new ScratchList($5->regList)),
+								shared_ptr<RegLnksListToSPRAM> (new RegLnksListToSPRAM($6->lnkSPList1,
+														       $6->lnkSPList2,
+														       $6->lnkSPList3)),
+								shared_ptr<RegLnksListToLockedSPRAM> (new RegLnksListToLockedSPRAM($6->lnkLockedSPList1,
+																   $6->lnkLockedSPList2,
+																   $6->lnkLockedSPList3)),
+								shared_ptr<RegLnksListToSRAM> (new RegLnksListToSRAM($6->lnkSRList1,
+														     $6->lnkSRList2,
+														     $6->lnkSRList3)),
+								shared_ptr<RegLnksListToSDRAM> (new RegLnksListToSDRAM($6->lnkSDList1,
+														       $6->lnkSDList2,
+														       $6->lnkSDList3)),
+								shared_ptr<RegLnksListToCCRAM> (new RegLnksListToCCRAM($6->lnkCCList1,
+														       $6->lnkCCList2,
+														       $6->lnkCCList3)),
+								shared_ptr<RegLnksListToLockedCCRAM> (new RegLnksListToLockedCCRAM($6->lnkLockedCCList1,
+																   $6->lnkLockedCCList2,
+																   $6->lnkLockedCCList3)),
+								shared_ptr<RegLnksListToSIO> (new RegLnksListToSIO($6->lnkSIOList1,
+														   $6->lnkSIOList2,
+														   $6->lnkSIOList3)));
+                        g_currentBlock->addLlirNode(g_currentBlock, protoDir);
+
+			//check if currentBlock is the root block otherwise complain
+/*  			g_prototypeDirList.push_back(shared_dynamic_cast<PrototypeDirective>(protoDir)); */
+
+                        addPrototypeToList(shared_dynamic_cast<PrototypeDirective>(protoDir));
+
+
+                      }
+                    | SREGISTER_TOKEN IDENTIFIER_TOKEN  optional_reg_constraints
+                      {
+			do_sregister($2, $3->reg_constraint, $3->constraint_reg_range);
+                      }
+                    | SMAP_TOKEN type_or_typepath_or_mapping_or_mappath IDENTIFIER_TOKEN optional_reg_constraints
+                      {
+			do_scoped_mapping($2, $3, $4->reg_constraint, $4->constraint_reg_range);
+                      }
+                    | GLOBAL_TOKEN register_list mem_link_reg_spec_list newline
+                      {
+			if (in_entry || in_evh)
+			  {
+			    parseAlo->logException(shared_ptr<ParseError>(new ParseError(".global must appear outside .evh or .entry block",
+											 get_src_line(),
+											 get_src_file(), 
+											 __LINE__, __FILE__)));
+			  }
+			
+			g_currentBlock->addLlirNode(g_currentBlock, 
+						    llirFactory->createGlobalDirective(get_node_line(), 
+										       get_src_line(),
+										       get_src_file(),
+										       shared_ptr<GlobalRegisterList> (new GlobalRegisterList($2->regList)),
+										       shared_ptr<RegLnksListToSPRAM> (new RegLnksListToSPRAM($3->lnkSPList1,
+																	      $3->lnkSPList2,
+																	      $3->lnkSPList3)),
+										       shared_ptr<RegLnksListToLockedSPRAM> (new RegLnksListToLockedSPRAM($3->lnkLockedSPList1,
+																			  $3->lnkLockedSPList2,
+																			  $3->lnkLockedSPList3)),
+										       shared_ptr<RegLnksListToSRAM> (new RegLnksListToSRAM($3->lnkSRList1,
+																	    $3->lnkSRList2,
+																	    $3->lnkSRList3)),
+										       shared_ptr<RegLnksListToSDRAM> (new RegLnksListToSDRAM($3->lnkSDList1,
+																	      $3->lnkSDList2,
+																	      $3->lnkSDList3)),
+										       shared_ptr<RegLnksListToCCRAM> (new RegLnksListToCCRAM($3->lnkCCList1,
+																	      $3->lnkCCList2,
+																	      $3->lnkCCList3)),
+										       shared_ptr<RegLnksListToLockedCCRAM> (new RegLnksListToLockedCCRAM($3->lnkLockedCCList1,
+																			  $3->lnkLockedCCList2,
+																			  $3->lnkLockedCCList3)),
+										       shared_ptr<RegLnksListToSIO> (new RegLnksListToSIO($3->lnkSIOList1,
+																	  $3->lnkSIOList2,
+																	  $3->lnkSIOList3))));
+
+		      }
+                    | JTABLE_BEGIN_TOKEN label_list
+                      {
+			shared_ptr<JtableBegin> jtBeginDir =
+			  llirFactory->createJtableBegin(get_node_line(), 
+							 get_src_line(),
+							 get_src_file(),
+							$2->labelList);
+			g_currentBlock->addLlirNode(g_currentBlock, jtBeginDir);
+			g_currentJtableBegin = jtBeginDir;
+			in_jtable = true;
+		      }
+                    | JTABLE_END_TOKEN 
+                      {
+			shared_ptr<JtableEnd> jtEndDir =
+			  llirFactory->createJtableEnd(get_node_line(), 
+						       get_src_line(),
+						       get_src_file());
+			g_currentBlock->addLlirNode(g_currentBlock, jtEndDir);
+			in_jtable = false;
+		      }                    
+                    | JTABLE_RELATIVE_BEGIN_TOKEN label_list
+                      {
+			shared_ptr<JtableRelativeBegin> jtBeginDir =
+			  llirFactory->createJtableRelativeBegin(get_node_line(), 
+								 get_src_line(),
+								 get_src_file(),
+								 $2->labelList);
+			g_currentBlock->addLlirNode(g_currentBlock, jtBeginDir);
+		      }
+                    | JTABLE_RELATIVE_END_TOKEN 
+                      {
+			shared_ptr<JtableRelativeEnd> jtEndDir =
+			  llirFactory->createJtableRelativeEnd(get_node_line(), 
+							       get_src_line(),
+							       get_src_file());
+			g_currentBlock->addLlirNode(g_currentBlock, jtEndDir);
+		      }
+                    | NO_REORDER_TOKEN 
+		      {
+			noopt_active = 1;
+		      }
+                    | END_NO_REORDER_TOKEN 
+		      {
+			noopt_active = 0;
+		      }
+                    ;
+
+
+/* "." in the context of expressions. */
+dot_expr: DOT_TOKEN
+     {
+       static char dot_string[64] = ".";
+       static int dot_count = 0;
+       if (optimizing)
+         {
+	   sprintf(dot_string, "_dot_%d", dot_count);
+	   dot_count++;
+	   /* Add to llir. */
+	   add_label_symbol(dot_string, OctaveSymbol::LOCAL); 
+	 }
+       $$ = dot_string;
+     }
+     ;
+
+
+label_list: IDENTIFIER_TOKEN 
+            {
+	      NEW(LabelListContainer, llc);
+	      llc->labelList = llirFactory->createLabelList();
+
+	      try
+		{
+		  shared_ptr<OpndLabel> label(new OpndLabel($1));
+
+		  llc->labelList->addLabel(label);
+
+		  /* Store label operand to be decorated with mangled name in fixup pass. */
+		  g_currentBlock->storeLabelOpnd(label);
+
+		}
+	      catch (LlirDirectiveException lde) 
+		{
+		  char * excStr = new char[128];
+		  sprintf(excStr, "Error:%s:%d:%s", get_src_file(), get_src_line(), lde.what());
+		  fatal_error(excStr);
+		}
+
+	      $$ = llc;
+            }
+          | label_list COMMA_TOKEN IDENTIFIER_TOKEN
+            {
+	      try
+		{
+		  shared_ptr<OpndLabel> label(new OpndLabel($3));
+
+		  $1->labelList->addLabel(label);
+
+		  /* Store label operand to be decorated with mangled name in fixup pass. */
+		  g_currentBlock->storeLabelOpnd(label);
+
+		}
+	      catch (LlirDirectiveException lde) 
+		{
+
+		  char * excStr = new char[128];
+		  sprintf(excStr, "Error:%s:%d:%s", get_src_file(), get_src_line(), lde.what());
+		  fatal_error(excStr);
+
+		}
+
+	      $$ = $1;
+            }
+           ;
+
+opt_indirect_call: /* emtpy */
+                   {
+		     NEW(OptionalIndirectCallTargetList, icl);
+		     icl->callList = llirFactory->createNullOperand();
+		     $$ = icl;
+                   }
+                 | AT_INDIRECT_CALL_TOKEN label_list
+                   {
+		     NEW(OptionalIndirectCallTargetList, icl);
+		     icl->callList = llirFactory->createIndirectCallTargetList($2->labelList);
+		     $$ = icl;
+		   }
+                 ;
+
+opt_br_prob: /* empty */
+              {
+		NEW(OptionalBranchProbability, obp);
+		obp->probability = OctaveInstruction::NONE;
+		$$ = obp;
+	      }
+            | AT_TAKEN
+              {
+		NEW(OptionalBranchProbability, obp);
+		obp->probability = OctaveInstruction::TAKEN;
+		$$ = obp;
+	      }
+            | AT_NOT_TAKEN
+              {
+		NEW(OptionalBranchProbability, obp);
+		obp->probability = OctaveInstruction::NOT_TAKEN;
+		$$ = obp;
+	      }
+            ;
+
+ 
+
+args_list: AT_ARGS_TOKEN '(' register_list ')'
+           {
+	     $$ = $3;
+           }
+           ;
+
+results_list: AT_RESULTS_TOKEN '(' register_list ')'
+           {
+	     $$ = $3;
+           }
+           ;
+
+scratch_list: AT_SCRATCH_TOKEN '(' register_list ')'
+           {
+	     $$ = $3;
+           }
+           ;
+register_list: /* empty */
+               {
+		 NEW(RegListContainer, rlc);
+		 rlc->regList = llirFactory->createRegList();
+		 $$ = rlc;
+	       }
+             | reg_spec
+               {
+		 NEW(RegListContainer, rlc);
+		 rlc->regList = llirFactory->createRegList();
+		 shared_ptr<const Register> reg = $1->regPtr;
+		 
+		 if(reg->getNumRegs() > 64)
+		   {
+		     char * excStr = new char[128];
+		     sprintf(excStr, "Error:%s:%d:%s", get_src_file(), get_src_line(), "out of range register size in the register list");
+		     fatal_error(excStr);
+
+		     reg = llirFactory->createHardReg(0);
+		   }
+
+		 try
+		   {
+		     rlc->regList->addRegister(reg);
+		   }
+		 catch (LlirDirectiveException lde) 
+		   {
+
+		     char * excStr = new char[128];
+		     sprintf(excStr, "Error:%s:%d:%s", get_src_file(), get_src_line(), lde.what());
+		     fatal_error(excStr);
+
+		   }
+
+
+		 $$ = rlc;
+
+	       }
+	     | register_list COMMA_TOKEN  reg_spec
+               { 
+		 shared_ptr<const Register> reg = $3->regPtr;
+
+		 if(reg->getNumRegs() > 64)
+		   {
+		     char * excStr = new char[128];
+		     sprintf(excStr, "Error:%s:%d:%s", get_src_file(), get_src_line(), "out of range register size in the register list");
+		     fatal_error(excStr);
+
+		     reg = llirFactory->createHardReg(0);
+		   }
+
+		 try
+		   {
+		     $1->regList->addRegister(reg);
+		   }
+		 catch (LlirDirectiveException lde) 
+		   {
+		    
+		     char * excStr = new char[128];
+		     sprintf(excStr, "Error:%s:%d:%s", get_src_file(), get_src_line(), lde.what());
+		     fatal_error(excStr);
+
+		   }
+
+		 $$ = $1;
+	       }
+               ;
+
+/* 
+   note that @link.. keywords are optional
+   there are couple of such keywords and
+   they can be repeated any number of times
+   and each such such keyword comes with a
+   register list argument
+*/
+mem_link_reg_spec_list: /* empty */
+               {
+		 /* The empty case will always "trigger" first in recursive productions.
+		    Take the opportunity to set up g_currentMLC. */
+		 NEW(MemoryLinksListContainer, mlc);
+
+		 mlc->lnkSPList1 = llirFactory->createRegList();
+		 mlc->lnkSPList2 = llirFactory->createRegList();
+		 mlc->lnkSPList3 = llirFactory->createRegList();
+
+		 mlc->lnkLockedSPList1 = llirFactory->createRegList();
+		 mlc->lnkLockedSPList2 = llirFactory->createRegList();
+		 mlc->lnkLockedSPList3 = llirFactory->createRegList();
+
+		 mlc->lnkSDList1 = llirFactory->createRegList();
+		 mlc->lnkSDList2 = llirFactory->createRegList();
+		 mlc->lnkSDList3 = llirFactory->createRegList();
+
+		 mlc->lnkSRList1 = llirFactory->createRegList();
+		 mlc->lnkSRList2 = llirFactory->createRegList();
+		 mlc->lnkSRList3 = llirFactory->createRegList();
+
+		 mlc->lnkCCList1 = llirFactory->createRegList();
+		 mlc->lnkCCList2 = llirFactory->createRegList();
+		 mlc->lnkCCList3 = llirFactory->createRegList();
+
+		 mlc->lnkLockedCCList1 = llirFactory->createRegList();
+		 mlc->lnkLockedCCList2 = llirFactory->createRegList();
+		 mlc->lnkLockedCCList3 = llirFactory->createRegList();
+
+		 mlc->lnkSIOList1 = llirFactory->createRegList();
+		 mlc->lnkSIOList2 = llirFactory->createRegList();
+		 mlc->lnkSIOList3 = llirFactory->createRegList();
+
+		 $$ = mlc;
+		 g_currentMLC = mlc;
+	       }
+	     | mem_link_reg_spec_list mem_link_reg_spec
+               {
+	       }
+             ;
+
+link_reg_spec: AT_LNK1_TOKEN '(' register_list ')'
+               {
+		 NEW(LinksListContainer, lc);
+
+		 lc->lnk1List = $3->regList;
+		 lc->lnk2List = llirFactory->createRegList();
+		 lc->lnk3List = llirFactory->createRegList();
+
+		 $$ = lc;
+               }
+             | AT_LNK2_TOKEN '(' register_list ')'
+               {
+		 NEW(LinksListContainer, lc);
+
+		 lc->lnk1List = llirFactory->createRegList();
+		 lc->lnk2List = $3->regList;
+		 lc->lnk3List = llirFactory->createRegList();
+
+		 $$ = lc;
+               }             
+             | AT_LNK3_TOKEN '(' register_list ')'
+               {
+		 NEW(LinksListContainer, lc);
+
+		 lc->lnk1List = llirFactory->createRegList();
+		 lc->lnk2List = llirFactory->createRegList();
+		 lc->lnk3List = $3->regList;
+
+		 $$ = lc;
+               }
+
+             | AT_LNK1_TOKEN '(' register_list ')' AT_LNK2_TOKEN '(' register_list ')'
+               {
+		 NEW(LinksListContainer, lc);
+
+		 lc->lnk1List = $3->regList;
+		 lc->lnk2List = $7->regList;
+		 lc->lnk3List = llirFactory->createRegList();
+
+		 $$ = lc;
+               }
+             | AT_LNK1_TOKEN '(' register_list ')' AT_LNK3_TOKEN '(' register_list ')'
+               {
+		 NEW(LinksListContainer, lc);
+
+		 lc->lnk1List = $3->regList;
+		 lc->lnk2List = llirFactory->createRegList();
+		 lc->lnk3List = $7->regList;
+
+		 $$ = lc;
+               }             
+               | AT_LNK2_TOKEN '(' register_list ')' AT_LNK3_TOKEN '(' register_list ')'
+               {
+		 NEW(LinksListContainer, lc);
+
+		 lc->lnk1List = llirFactory->createRegList();
+		 lc->lnk2List = $3->regList;
+		 lc->lnk3List = $7->regList;
+
+		 $$ = lc;
+               }
+
+             | AT_LNK1_TOKEN '(' register_list ')' AT_LNK2_TOKEN '(' register_list ')' AT_LNK3_TOKEN '(' register_list ')'
+               {
+		 NEW(LinksListContainer, lc);
+
+		 lc->lnk1List = $3->regList;
+		 lc->lnk2List = $7->regList;
+		 lc->lnk3List = $11->regList;
+
+		 $$ = lc;
+               }
+             | AT_LNK1_TOKEN '(' register_list ')' AT_LNK3_TOKEN '(' register_list ')' AT_LNK2_TOKEN '(' register_list ')'
+               {
+		 NEW(LinksListContainer, lc);
+
+		 lc->lnk1List = $3->regList;
+		 lc->lnk2List = $11->regList;
+		 lc->lnk3List = $7->regList;
+
+		 $$ = lc;
+               }
+             | AT_LNK2_TOKEN '(' register_list ')' AT_LNK1_TOKEN '(' register_list ')' AT_LNK3_TOKEN '(' register_list ')'
+               {
+		 NEW(LinksListContainer, lc);
+
+		 lc->lnk1List = $7->regList;
+		 lc->lnk2List = $3->regList;
+		 lc->lnk3List = $11->regList;
+
+		 $$ = lc;
+               }
+             | AT_LNK2_TOKEN '(' register_list ')' AT_LNK3_TOKEN '(' register_list ')' AT_LNK1_TOKEN '(' register_list ')'
+               {
+		 NEW(LinksListContainer, lc);
+
+		 lc->lnk1List = $11->regList;
+		 lc->lnk2List = $3->regList;
+		 lc->lnk3List = $7->regList;
+
+		 $$ = lc;
+               }
+             | AT_LNK3_TOKEN '(' register_list ')' AT_LNK1_TOKEN '(' register_list ')' AT_LNK2_TOKEN '(' register_list ')'
+               {
+		 NEW(LinksListContainer, lc);
+
+		 lc->lnk1List = $7->regList;
+		 lc->lnk2List = $11->regList;
+		 lc->lnk3List = $3->regList;
+
+		 $$ = lc;
+               }
+             | AT_LNK3_TOKEN '(' register_list ')' AT_LNK2_TOKEN '(' register_list ')' AT_LNK1_TOKEN '(' register_list ')'
+               {
+		 NEW(LinksListContainer, lc);
+
+		 lc->lnk1List = $11->regList;
+		 lc->lnk2List = $7->regList;
+		 lc->lnk3List = $3->regList;
+
+		 $$ = lc;
+               }
+               ;
+
+mem_link_reg_spec: AT_LINKED_SP_TOKEN '(' link_reg_spec ')'
+                   {
+		     RegList::Iterator iter;
+
+		     iter = $3->lnk1List->begin();
+
+		     for(; iter != $3->lnk1List->end(); iter++)
+		       {
+			 g_currentMLC->lnkSPList1->addRegister(iter->second);
+		       }
+
+		     iter = $3->lnk2List->begin();
+
+		     for(; iter != $3->lnk2List->end(); iter++)
+		       {
+			 g_currentMLC->lnkSPList2->addRegister(iter->second);
+		       }
+
+		     iter = $3->lnk3List->begin();
+
+		     for(; iter != $3->lnk3List->end(); iter++)
+		       {
+			 g_currentMLC->lnkSPList3->addRegister(iter->second);
+		       }
+                   }
+                 | AT_LINKED_LOCKED_SP_TOKEN '(' link_reg_spec ')'
+                   {
+		     RegList::Iterator iter;
+
+		     iter = $3->lnk1List->begin();
+
+		     for(; iter != $3->lnk1List->end(); iter++)
+		       {
+			 g_currentMLC->lnkLockedSPList1->addRegister(iter->second);
+		       }
+
+		     iter = $3->lnk2List->begin();
+
+		     for(; iter != $3->lnk2List->end(); iter++)
+		       {
+			 g_currentMLC->lnkLockedSPList2->addRegister(iter->second);
+		       }
+
+		     iter = $3->lnk3List->begin();
+
+		     for(; iter != $3->lnk3List->end(); iter++)
+		       {
+			 g_currentMLC->lnkLockedSPList3->addRegister(iter->second);
+		       }
+                   }
+                 | AT_LINKED_SD_TOKEN '(' link_reg_spec ')'
+                   {
+		     RegList::Iterator iter;
+
+		     iter = $3->lnk1List->begin();
+		     
+		     for(; iter != $3->lnk1List->end(); iter++)
+		       {
+			 g_currentMLC->lnkSDList1->addRegister(iter->second);
+		       }
+
+		     iter = $3->lnk2List->begin();
+		     
+		     for(; iter != $3->lnk2List->end(); iter++)
+		       {
+			 g_currentMLC->lnkSDList2->addRegister(iter->second);
+		       }
+
+		     iter =  $3->lnk3List->begin();
+		     
+		     for(; iter !=  $3->lnk3List->end(); iter++)
+		       {
+			 g_currentMLC->lnkSDList3->addRegister(iter->second);
+		       }
+                   }
+                 | AT_LINKED_SR_TOKEN '(' link_reg_spec ')'
+                   {
+		     RegList::Iterator iter;
+
+		     iter = $3->lnk1List->begin();
+		     
+		     for(; iter != $3->lnk1List->end(); iter++)
+		       {
+			 g_currentMLC->lnkSRList1->addRegister(iter->second);
+		       }
+
+		     iter = $3->lnk2List->begin();
+		     
+		     for(; iter != $3->lnk2List->end(); iter++)
+		       {
+			 g_currentMLC->lnkSRList2->addRegister(iter->second);
+		       }
+
+		     iter =  $3->lnk3List->begin();
+		     
+		     for(; iter !=  $3->lnk3List->end(); iter++)
+		       {
+			 g_currentMLC->lnkSRList3->addRegister(iter->second);
+		       }
+                   }
+                 | AT_LINKED_CC_TOKEN '(' link_reg_spec ')'
+                   {
+		     RegList::Iterator iter;
+
+		     iter = $3->lnk1List->begin();
+		     
+		     for(; iter != $3->lnk1List->end(); iter++)
+		       {
+			 g_currentMLC->lnkCCList1->addRegister(iter->second);
+		       }
+
+		     iter = $3->lnk2List->begin();
+		     
+		     for(; iter != $3->lnk2List->end(); iter++)
+		       {
+			 g_currentMLC->lnkCCList2->addRegister(iter->second);
+		       }
+
+		     iter =  $3->lnk3List->begin();
+		     
+		     for(; iter !=  $3->lnk3List->end(); iter++)
+		       {
+			 g_currentMLC->lnkCCList3->addRegister(iter->second);
+		       }
+                   }
+                 | AT_LINKED_LOCKED_CC_TOKEN '(' link_reg_spec ')'
+                   {
+		     RegList::Iterator iter;
+
+		     iter = $3->lnk1List->begin();
+		     
+		     for(; iter != $3->lnk1List->end(); iter++)
+		       {
+			 g_currentMLC->lnkLockedCCList1->addRegister(iter->second);
+		       }
+
+		     iter = $3->lnk2List->begin();
+		     
+		     for(; iter != $3->lnk2List->end(); iter++)
+		       {
+			 g_currentMLC->lnkLockedCCList2->addRegister(iter->second);
+		       }
+
+		     iter =  $3->lnk3List->begin();
+		     
+		     for(; iter !=  $3->lnk3List->end(); iter++)
+		       {
+			 g_currentMLC->lnkLockedCCList3->addRegister(iter->second);
+		       }
+                   }
+                 | AT_LINKED_SIO_TOKEN '(' link_reg_spec ')'
+                   {
+		     RegList::Iterator iter;
+
+		     iter = $3->lnk1List->begin();
+		     
+		     for(; iter != $3->lnk1List->end(); iter++)
+		       {
+			 g_currentMLC->lnkSIOList1->addRegister(iter->second);
+		       }
+
+		     iter = $3->lnk2List->begin();
+		     
+		     for(; iter != $3->lnk2List->end(); iter++)
+		       {
+			 g_currentMLC->lnkSIOList2->addRegister(iter->second);
+		       }
+
+		     iter =  $3->lnk3List->begin();
+		     
+		     for(; iter !=  $3->lnk3List->end(); iter++)
+		       {
+			 g_currentMLC->lnkSIOList3->addRegister(iter->second);
+		       }
+                   }
+                   ;
+
+optional_reg_constraints: /* empty */
+                         {
+			   NEW(OptionalRegConstraints, orc);
+			   /* SRC ==> symbolic register constraint */
+			   orc->reg_constraint = AbstractSymReg::SRC_NONE;
+			   orc->constraint_reg_range = llirFactory->createNullReg();
+			   $$ = orc;
+                         }
+                       | begin_reg_constraint
+                         {
+			   NEW(OptionalRegConstraints, orc);
+			   orc->reg_constraint = $1;
+			   orc->constraint_reg_range = llirFactory->createNullReg();
+			   $$ = orc;
+                         }
+                       ;
+
+begin_reg_constraint: AT_EVEN_TOKEN 
+                     {
+		       $$ = AbstractSymReg::SRC_BEGIN_AT_EVEN_REG;
+                     }
+                   | AT_ODD_TOKEN
+                     {
+		       $$ = AbstractSymReg::SRC_BEGIN_AT_ODD_REG;
+                     }         
+                   ;
+
+processor_instruction: generic_processor_instruction
+                     {
+		     }
+
+                    /* 480-specific instructions... */
+
+		    /* JADDL_TOKEN flavor instructions. */
+                     | JADDL_TOKEN single_reg_spec single_reg_spec optional_branch_disp opt_br_prob newline { 
+                         NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createJaddlInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(), 
+									  $2->regPtr, 
+									  $3->regPtr,
+									  $4->branch_disp,
+									  $5->probability);
+			 $$ = p;
+                         }
+                     | JADDL_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JADDWH_TOKEN single_reg_spec single_reg_spec optional_branch_disp opt_br_prob newline {
+                         NEW(OctaveInsnContainer, p);
+                         p->insnPtr = llirFactory->createJaddwhInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), 
+									   $2->regPtr, 
+									   $3->regPtr,
+									   $4->branch_disp,
+									   $5->probability);
+                         $$ = p;
+                         }
+                     | JADDWH_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JADDWL_TOKEN single_reg_spec single_reg_spec optional_branch_disp opt_br_prob newline {
+                         NEW(OctaveInsnContainer, p);
+                         p->insnPtr = llirFactory->createJaddwlInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), 
+									   $2->regPtr, 
+									   $3->regPtr,
+									   $4->branch_disp,
+									   $5->probability);
+                         $$ = p;
+                         }
+                     | JADDWL_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JADDWW_TOKEN single_reg_spec single_reg_spec optional_branch_disp opt_br_prob newline {
+                         NEW(OctaveInsnContainer, p);
+                         p->insnPtr = llirFactory->createJaddwwInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), 
+									   $2->regPtr, 
+									   $3->regPtr,
+									   $4->branch_disp,
+									   $5->probability);
+                         $$ = p;
+                         }
+                     | JADDWW_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JSUBL_TOKEN single_reg_spec single_reg_spec optional_branch_disp opt_br_prob newline {
+                         NEW(OctaveInsnContainer, p);
+                         p->insnPtr = llirFactory->createJsublInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(), 
+									  $2->regPtr, 
+									  $3->regPtr,
+									  $4->branch_disp,
+									  $5->probability);
+                         $$ = p;
+                         }
+                     | JSUBL_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JSUBWH_TOKEN single_reg_spec single_reg_spec optional_branch_disp opt_br_prob newline {
+                         NEW(OctaveInsnContainer, p);
+                         p->insnPtr = llirFactory->createJsubwhInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), 
+									   $2->regPtr, 
+									   $3->regPtr,
+									   $4->branch_disp,
+									   $5->probability);
+                         $$ = p;
+                         }
+                     | JSUBWH_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JSUBWL_TOKEN single_reg_spec single_reg_spec optional_branch_disp opt_br_prob newline {
+                         NEW(OctaveInsnContainer, p);
+                         p->insnPtr = llirFactory->createJsubwlInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), 
+									   $2->regPtr, 
+									   $3->regPtr,
+									   $4->branch_disp,
+									   $5->probability);
+                         $$ = p;
+                         }
+                     | JSUBWL_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JSUBWW_TOKEN single_reg_spec single_reg_spec optional_branch_disp opt_br_prob newline {
+                         NEW(OctaveInsnContainer, p);
+                         p->insnPtr = llirFactory->createJsubwwInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), 
+									   $2->regPtr, 
+									   $3->regPtr,
+									   $4->branch_disp,
+									   $5->probability);
+                         $$ = p;
+                         }
+                     | JSUBWW_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+		    /* JADDLI_TOKEN flavor instructions. */
+                     | JADDLI_TOKEN imm6 single_reg_spec optional_branch_disp opt_br_prob  newline {
+                         NEW(OctaveInsnContainer, p);
+                         p->insnPtr = llirFactory->createJaddliInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), 
+									   container_to_uimm_ptr($2),
+									   $3->regPtr, 
+									   $4->branch_disp,
+									   $5->probability);
+                         $$ = p;
+                         }
+
+                     | JADDLI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JADDWHI_TOKEN imm6 single_reg_spec optional_branch_disp opt_br_prob newline {
+                         NEW(OctaveInsnContainer, p);
+                         p->insnPtr = llirFactory->createJaddwhiInstruction(get_node_line(), 
+									    get_src_line(),
+									    get_src_file(), 
+									    container_to_uimm_ptr($2),
+									    $3->regPtr,
+									    $4->branch_disp,
+									    $5->probability);
+                         $$ = p;
+                         }
+                     | JADDWHI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JADDWLI_TOKEN imm6 single_reg_spec optional_branch_disp opt_br_prob newline {
+                         NEW(OctaveInsnContainer, p);
+                         p->insnPtr = llirFactory->createJaddwliInstruction(get_node_line(), 
+									    get_src_line(),
+									    get_src_file(), 
+									    container_to_uimm_ptr($2),
+									    $3->regPtr,
+									    $4->branch_disp,
+									    $5->probability);
+                         $$ = p;
+                         }
+                     | JADDWLI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JADDWWI_TOKEN imm6 single_reg_spec optional_branch_disp opt_br_prob newline {
+                         NEW(OctaveInsnContainer, p);
+                         p->insnPtr = llirFactory->createJaddwwiInstruction(get_node_line(), 
+									    get_src_line(),
+									    get_src_file(), 
+									    container_to_uimm_ptr($2),
+									    $3->regPtr, 
+									    $4->branch_disp,
+									    $5->probability);
+                         $$ = p;
+                         }
+                     | JADDWWI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+										    get_src_line(),
+										    get_src_file());
+			 $$ = p;
+		       }
+                     | JSUBLI_TOKEN imm6 single_reg_spec optional_branch_disp opt_br_prob newline {
+                         NEW(OctaveInsnContainer, p);
+                         p->insnPtr = llirFactory->createJsubliInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), 
+									   container_to_uimm_ptr($2),
+									   $3->regPtr, 
+									   $4->branch_disp,
+									   $5->probability);
+                         $$ = p;
+                         }
+                     | JSUBLI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JSUBWHI_TOKEN imm6 single_reg_spec optional_branch_disp opt_br_prob newline {
+                         NEW(OctaveInsnContainer, p);
+                         p->insnPtr = llirFactory->createJsubwhiInstruction(get_node_line(), 
+									    get_src_line(),
+									    get_src_file(), 
+									    container_to_uimm_ptr($2),
+									    $3->regPtr, 
+									    $4->branch_disp,
+									    $5->probability);
+                         $$ = p;
+                         }
+                     | JSUBWHI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JSUBWLI_TOKEN imm6 single_reg_spec optional_branch_disp opt_br_prob newline {
+                         NEW(OctaveInsnContainer, p);
+                         p->insnPtr = llirFactory->createJsubwliInstruction(get_node_line(), 
+									    get_src_line(),
+									    get_src_file(), 
+									    container_to_uimm_ptr($2),
+									    $3->regPtr, 
+									    $4->branch_disp,
+									    $5->probability);
+                         $$ = p;
+                         }
+                     | JSUBWLI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JSUBWWI_TOKEN imm6 single_reg_spec optional_branch_disp opt_br_prob newline {
+                         NEW(OctaveInsnContainer, p);
+                         p->insnPtr = llirFactory->createJsubwwiInstruction(get_node_line(), 
+									    get_src_line(),
+									    get_src_file(), 
+									    container_to_uimm_ptr($2),
+									    $3->regPtr, 
+									    $4->branch_disp,
+									    $5->probability);
+                         $$ = p;
+                         }
+                     | JSUBWWI_TOKEN error newline  newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JBCDI_TOKEN expression cond_branch_args opt_br_prob newline {
+		         NEW(OctaveInsnContainer, p);
+			 $3->finalize();
+			 p->insnPtr = llirFactory->createJbcdiInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(),
+									  container_check_branch_expr($2),
+									  $3->ess,
+									  $3->rd,
+									  $3->flags,
+									  $4->probability);
+
+			 $$ = p;
+		         }
+                     | JBCDI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JBCDR_TOKEN single_reg_spec cond_branch_args opt_indirect_call opt_br_prob newline {
+		         NEW(OctaveInsnContainer, p);
+			 $3->finalize();
+			 p->insnPtr = llirFactory->createJbcdrInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(),
+									  $2->regPtr,
+									  $3->ess,
+									  $3->rd,
+									  $3->flags,
+									  $4->callList,
+									  $5->probability);
+			 $$ = p;
+		         }
+                     | JBCDR_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JBCI_TOKEN expression cond_branch_args opt_br_prob newline 
+                       {
+		         NEW(OctaveInsnContainer, p);
+			 $3->finalize();
+			 p->insnPtr = llirFactory->createJbciInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file(),
+									 container_check_branch_expr($2),
+									 $3->ess,
+									 $3->rd,
+									 $3->flags,
+									 $4->probability);
+
+			 $$ = p;
+		         }
+                     | JBCI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JBCR_TOKEN single_reg_spec cond_branch_args opt_indirect_call opt_br_prob newline 
+                       {
+		         NEW(OctaveInsnContainer, p);
+			 $3->finalize();
+			 p->insnPtr = llirFactory->createJbcrInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file(),
+									 $2->regPtr,
+									 $3->ess,
+									 $3->rd,
+									 $3->flags,
+									 $4->callList,
+									 $5->probability);
+			 $$ = p;
+		         }
+                     | JBCR_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                    | JBI_TOKEN expression bi_arg_set newline {
+		         NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createJbiInstruction(get_node_line(), 
+									get_src_line(),
+									get_src_file(),
+								       container_check_branch_expr($2),
+								       $3->rd,
+								       $3->cd_flag);
+
+			 $$ = p;
+ 		         }
+                     | JBI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+
+                     | JBNZR_TOKEN single_reg_spec single_reg_spec optional_reg opt_indirect_call opt_br_prob  newline {
+                          NEW(OctaveInsnContainer, p);
+                          p->insnPtr = llirFactory->createJbnzrInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(),
+									   $2->regPtr,
+									   $3->regPtr,
+									   $4->reg,
+									   $5->callList,
+									   $6->probability);
+                         $$ = p;
+		     }
+                     | JBNZR_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+
+                     | JBNZI_TOKEN single_reg_spec expression optional_reg opt_br_prob newline 
+                       {
+                          NEW(OctaveInsnContainer, p);
+                          p->insnPtr = llirFactory->createJbnziInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(),
+									   $2->regPtr,
+									   container_check_branch_expr($3),
+									   $4->reg,
+									   $5->probability);
+
+                         $$ = p;
+		     }
+                     | JBNZI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+
+                     | JTABLEBR_TOKEN single_reg_spec expression newline {
+		         NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createJtablebrInstruction(get_node_line(), 
+									     get_src_line(),
+									     get_src_file(),
+									     $2->regPtr,
+									     container_check_branch_expr($3));
+			 $$ = p;
+ 		         }
+                     | JTABLEBR_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JTABLEBR_RELATIVE_TOKEN single_reg_spec expression newline 
+                       {
+		         NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createJtableRelativebrInstruction(get_node_line(), 
+										     get_src_line(),
+										     get_src_file(),
+										     $2->regPtr,
+										     container_check_branch_expr($3));
+			 $$ = p;
+ 		         }
+                     | JTABLEBR_RELATIVE_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JBR_TOKEN single_reg_spec optional_reg opt_indirect_call newline 
+                       {
+		         NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createJbrInstruction(get_node_line(), 
+									get_src_line(),
+									get_src_file(),
+									$2->regPtr,
+									$3->reg,
+									$4->callList);
+			 $$ = p;
+		       }
+                     | JBR_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+
+                     | JBRS_TOKEN optional_reg newline {
+		         NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createJbrsInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file(),
+									$2->reg);
+			 $$ = p;
+ 		         }
+                     | JBRS_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+
+
+                    | JBRSL_TOKEN brsl_arg_set newline {
+		         NEW(OctaveInsnContainer, p);
+			 current_brsl_arg_set->finalize();
+                         p->insnPtr = llirFactory->createJbrslInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(),
+                                                                         $2->flags);
+                         $$ = p;
+		       }
+                     | JBRSL_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JBZR_TOKEN single_reg_spec single_reg_spec optional_reg opt_indirect_call opt_br_prob  newline {
+		          NEW(OctaveInsnContainer, p);
+			  p->insnPtr = llirFactory->createJbzrInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(),
+									  $2->regPtr,
+									  $3->regPtr,
+									  $4->reg,
+									  $5->callList,
+									  $6->probability);
+                         $$ = p;
+		       }
+                     | JBZR_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+
+                     | JBZI_TOKEN single_reg_spec expression optional_reg opt_br_prob newline {
+                          NEW(OctaveInsnContainer, p);
+                          p->insnPtr = llirFactory->createJbziInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(),
+									  $2->regPtr,
+									  container_check_branch_expr($3),
+									  $4->reg,
+									  $5->probability);
+                         $$ = p;
+		     }
+
+                     | JBZI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JCMP_TOKEN single_reg_spec single_reg_spec optional_branch_disp_with_abc opt_br_prob newline {
+		         NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createJcmpInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file(), 
+									 $2->regPtr, 
+									 $3->regPtr,
+									 $4->abc_flag, 
+									 $4->branch_disp,
+									 $5->probability);
+			 $$ = p;
+   		       }
+                     | JCMP_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JCMPI_TOKEN single_reg_spec imm10 optional_branch_disp_with_abc opt_br_prob newline {
+		         NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createJcmpiInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(), 
+									  $2->regPtr, 
+									  container_to_simm_ptr($3),
+									  $4->abc_flag, 
+									  $4->branch_disp,
+									  $5->probability);
+			 $$ = p;
+		       }
+                     | JCMPI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JRINT_TOKEN optional_di_flag newline {
+		       NEW(OctaveInsnContainer, p);
+		       p->insnPtr = llirFactory->createJrintInstruction(get_node_line(), 
+									get_src_line(),
+									get_src_file(), $2->di_flag);
+		       $$ = p;
+		       }
+                     | JRINT_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+
+                     | JRNMI_TOKEN optional_di_flag newline {
+		       NEW(OctaveInsnContainer, p);
+		       p->insnPtr = llirFactory->createJrnmiInstruction(get_node_line(), 
+									get_src_line(),
+									get_src_file(), $2->di_flag);
+		       $$ = p;
+		       }
+                     | JRNMI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JTSETB_TOKEN test_form BR_TOKEN '=' expression opt_br_prob newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createJtsetbInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), 
+									   $2->reg,
+									   $2->bitnum,
+									   $5->exprPtr,
+									   $6->probability);
+			 $$ = p;
+		       }
+                     | JTSETB_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | JTCLRB_TOKEN test_form BR_TOKEN '=' expression opt_br_prob newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createJtclrbInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), 
+									   $2->reg,
+									   $2->bitnum,
+									   $5->exprPtr,
+									   $6->probability);
+			 $$ = p;
+		       }
+                     | JTCLRB_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+
+                     | JHEC5_TOKEN single_reg_spec single_reg_spec imm3 optional_hec_flag optional_branch_disp opt_br_prob newline 
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createJHec5Instruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(), $2->regPtr, $3->regPtr, 
+									  container_to_uimm_ptr($4),
+									  $5->cume, $6->branch_disp,
+									  $7->probability);
+			 $$ = p; 
+		       }
+
+                      | JHEC5_TOKEN error newline
+                        {
+ 			 NEW (OctaveInsnContainer, p);
+ 
+ 			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+ 									 get_src_line(),
+ 									 get_src_file());
+ 			 $$ = p;
+ 		       }                     
+
+                     | LINKSP_TOKEN multireg_form  optional_lnk_flag newline
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createLinkspInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), $2->regs, $2->mem, 
+									   shared_static_cast<const LinkFlag>($3->linkFlag));
+			 $$ = p;
+		       }
+                     | LINKSP_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }                     
+                     | LINKSPL_TOKEN multireg_form  optional_lnk_flag newline
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createLinksplInstruction(get_node_line(), 
+									    get_src_line(),
+									    get_src_file(), $2->regs, $2->mem, 
+									    shared_static_cast<const LinkFlag>($3->linkFlag));
+			 $$ = p;
+		       }
+                     | LINKSPL_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | LINKSR_TOKEN multireg_form  optional_lnk_flag newline
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createLinksrInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), $2->regs, $2->mem, 
+									    shared_static_cast<const LinkFlag>($3->linkFlag));
+			 $$ = p;
+		       }
+                     | LINKSR_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | LINKSD_TOKEN multireg_form  optional_lnk_flag newline
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createLinksdInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), $2->regs, $2->mem, 
+									    shared_static_cast<const LinkFlag>($3->linkFlag));
+			 $$ = p;
+		       }
+                     | LINKSD_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | LINKCC_TOKEN multireg_form  optional_lnk_flag newline
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createLinkccInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), $2->regs, $2->mem, 
+									   shared_static_cast<const LinkFlag>($3->linkFlag));
+			 $$ = p;
+		       }
+                     | LINKCC_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | LINKCCL_TOKEN multireg_form  optional_lnk_flag newline
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createLinkcclInstruction(get_node_line(), 
+									    get_src_line(),
+									    get_src_file(), $2->regs, $2->mem, 
+									    shared_static_cast<const LinkFlag>($3->linkFlag));
+			 $$ = p;
+		       }
+                     | LINKCCL_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | LINKSIO_TOKEN multireg_form  optional_lnk_flag newline
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createLinksioInstruction(get_node_line(), 
+									    get_src_line(),
+									    get_src_file(), $2->regs, $2->mem, 
+									    shared_static_cast<const LinkFlag>($3->linkFlag));
+			 $$ = p;
+		       }
+                     | LINKSIO_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | LMMSP_TOKEN scratchpad_form optional_lnk_flag newline {
+		       NEW(OctaveInsnContainer, p);
+
+		       p->insnPtr = llirFactory->createLmmspInstruction(get_node_line(), 
+									get_src_line(),
+									get_src_file(), $2->regs, $2->mem, $3->linkFlag);
+		       $$ = p;
+		     }
+                     | LMMSP_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | LMMSPL_TOKEN scratchpad_form  optional_lnk_flag newline 
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createLmmsplInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), $2->regs, $2->mem, $3->linkFlag);
+			 $$ = p;
+		       }
+                     | LMMSPL_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | LMMSR_TOKEN multireg_form  optional_lnk_flag newline 
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createLmmsrInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(), $2->regs, $2->mem, $3->linkFlag);
+			 $$ = p;
+		       }
+                     | LMMSR_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | LMMSD_TOKEN multireg_form  optional_lnk_flag newline 
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createLmmsdInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(), $2->regs, $2->mem, $3->linkFlag);
+			 $$ = p;
+		       }
+                     | LMMSD_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | LMMCC_TOKEN multireg_form  optional_lnk_flag newline 
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createLmmccInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(), $2->regs, $2->mem, $3->linkFlag);
+			 $$ = p;
+		       }
+                     | LMMCC_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | LMMCCL_TOKEN multireg_form  optional_lnk_flag newline 
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createLmmcclInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), $2->regs, $2->mem, $3->linkFlag);
+			 $$ = p;
+		       }
+                     | LMMCCL_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | LMMSI_TOKEN multireg_form  optional_lnk_flag newline 
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createLmmsiInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(), $2->regs, $2->mem, $3->linkFlag);
+			 $$ = p;
+		       }
+                     | LMMSI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | SMMSP_TOKEN scratchpad_form newline
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createSmmspInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(), $2->regs, $2->mem);
+			 $$ = p;
+		       }
+                     | SMMSP_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | SMMSPL_TOKEN scratchpad_form newline
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createSmmsplInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), $2->regs, $2->mem);
+			 $$ = p;
+		       }
+                     | SMMSPL_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | SMMSR_TOKEN multireg_form newline
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createSmmsrInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(), $2->regs, $2->mem);
+			 $$ = p;
+		       }
+                     | SMMSR_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | SMMSD_TOKEN multireg_form newline
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createSmmsdInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(), $2->regs, $2->mem);
+			 $$ = p;
+		       }
+                     | SMMSD_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | SMMCC_TOKEN multireg_form newline
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createSmmccInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(), $2->regs, $2->mem);
+			 $$ = p;
+		       }
+                     | SMMCC_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | SMMCCL_TOKEN multireg_form newline
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createSmmcclInstruction(get_node_line(), 
+									   get_src_line(),
+									   get_src_file(), $2->regs, $2->mem);
+			 $$ = p;
+		       }
+                     | SMMCCL_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | SMMSI_TOKEN multireg_form newline
+                       {
+			 NEW(OctaveInsnContainer, p);
+			 p->insnPtr = llirFactory->createSmmsiInstruction(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(), $2->regs, $2->mem);
+			 $$ = p;
+		       }
+                     | SMMSI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+
+                     | PUTC_TOKEN single_reg_spec single_reg_spec traffic_sched_flags newline {
+                       NEW(OctaveInsnContainer, p);
+                       p->insnPtr = llirFactory->createPutcInstruction(get_node_line(), 
+								       get_src_line(),
+								       get_src_file(), $2->regPtr, $3->regPtr, $4->flags);
+                       $$ = p; 
+		       }
+                     | PUTC_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | PUTD_TOKEN single_reg_spec single_reg_spec traffic_sched_flags newline {
+                       NEW(OctaveInsnContainer, p);
+                       p->insnPtr = llirFactory->createPutdInstruction(get_node_line(), 
+								       get_src_line(),
+								       get_src_file(), $2->regPtr, $3->regPtr, $4->flags);
+                       $$ = p; 
+		       }
+                     | PUTD_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | PUTP_TOKEN single_reg_spec single_reg_spec traffic_sched_flags newline {
+                       NEW(OctaveInsnContainer, p);
+                       p->insnPtr = llirFactory->createPutpInstruction(get_node_line(), 
+								       get_src_line(),
+								       get_src_file(), $2->regPtr, $3->regPtr, $4->flags);
+                       $$ = p; 
+		       }
+                     | PUTP_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+
+                     ;
+
+
+%%
+/* Supporting C code. */
+
+static void create_evh(shared_ptr<MultipleEntryEvh> evh)
+{
+  if (in_evh || in_entry)
+    {
+      parseAlo->logException(shared_ptr<ParseError>
+			     (new ParseError("incorrect .evh declaration, .evh cannot be nested within another .evh or .entry",
+					     get_src_line(), 
+					     get_src_file(), 
+					     __LINE__, __FILE__)));      
+    }
+
+  /***
+
+  FIXME:
+  The "if" clause above should handle nesting, and do we really need to restrict .evh and .entry
+  from appearing inside .block?  If not, remove the section below...
+
+  LlirOctaveBlock::ParentListIterator pli;
+  pli = g_currentBlock->getParent();
+  if (pli != g_currentBlock->parentListEnd())
+  {
+  parseAlo->logException(shared_ptr<ParseError>
+  (new ParseError("incorrect .evh declaration, .evh cannot be nested within another .evh, .entry or .block",
+  get_src_line(), 
+  get_src_file(), 
+  __LINE__, __FILE__)));
+  return;
+  }
+
+  ***/
+
+  g_currentBlock->addLlirNode(g_currentBlock, evh);
+  g_currentAltEntryFn = evh;
+  g_currentBlock = evh->getImplicitBlock();
+
+  nesting_stack.push(EVH_BLOCK);
+  in_evh = true;
+}
+
+
+static void end_evh(const char* name)
+{
+  if (nesting_stack.top() != EVH_BLOCK)
+    {
+      string s = "nesting error at .endevh, opening directive was ";
+      s.append(block_thing_names[nesting_stack.top()]);
+      parseAlo->logException(shared_ptr<ParseError>(new ParseError(s.c_str(),
+								   get_src_line(), 
+								   get_src_file(), 
+								   __LINE__, 
+								   __FILE__)));
+    }
+  else
+    {
+      nesting_stack.pop();
+    }
+
+  if(! g_currentAltEntryFn)
+    {
+      parseAlo->logException(shared_ptr<ParseError>(new ParseError("stray .endevh without a .evh",
+								   get_src_line(), 
+								   get_src_file(), 
+								   __LINE__, 
+								   __FILE__)));
+    }
+
+  if(g_currentAltEntryFn->getEntryPtList()->getLabel(0)->getName() != name)
+    {
+      parseAlo->logException(shared_ptr<ParseError>(new ParseError(".endevh name does not match first entry at label ...",
+								   get_src_line(), 
+								   get_src_file(), 
+								   __LINE__, 
+								   __FILE__)));
+    }
+
+  LlirOctaveBlock::ParentListIterator pli;
+  
+  pli = g_currentAltEntryFn->getImplicitBlock()->getParent();
+
+  g_currentBlock = pli->second;  
+
+  shared_ptr<EndEvhDirective> endEvh = llirFactory->createEndEvhDirective(get_node_line(), 
+									  get_src_line(),
+									  get_src_file(), name);
+  g_currentBlock->addLlirNode(g_currentBlock, endEvh);
+
+  g_currentAltEntryFnEnd = endEvh;
+
+  in_evh = false;
+}
+
+
+static void create_entry(shared_ptr<MultipleEntryFunction> fn)
+{
+  if (in_evh || in_entry)
+    {
+      parseAlo->logException(shared_ptr<ParseError>
+			     (new ParseError("incorrect .entry declaration, .entry cannot be nested within another .evh or .entry",
+					     get_src_line(), 
+					     get_src_file(), 
+					     __LINE__, __FILE__)));      
+    }
+
+  LlirOctaveBlock::ParentListIterator pli;
+
+  pli = g_currentBlock->getParent();
+
+  g_currentBlock->addLlirNode(g_currentBlock, fn);
+  g_currentAltEntryFn = fn;
+  g_currentBlock = fn->getImplicitBlock();
+
+  nesting_stack.push(ENTRY_BLOCK);
+  in_entry = true;
+}
+
+
+static void end_entry(const char* name)
+{
+  if (nesting_stack.top() != ENTRY_BLOCK)
+    {
+      string s = "nesting error at .endentry, opening directive was ";
+      s.append(block_thing_names[nesting_stack.top()]);
+      parseAlo->logException(shared_ptr<ParseError>(new ParseError(s.c_str(),
+								   get_src_line(), 
+								   get_src_file(), 
+								   __LINE__, 
+								   __FILE__)));
+    }
+  else
+    {
+      nesting_stack.pop();
+    }
+
+  if(! g_currentAltEntryFn)
+    {
+      parseAlo->logException(shared_ptr<ParseError>(new ParseError("stray .endentry without a .entry",
+								   get_src_line(), 
+								   get_src_file(), 
+								   __LINE__, 
+								   __FILE__)));
+      return;
+    }
+
+  if(g_currentAltEntryFn->getEntryPtList()->getLabel(0)->getName() != name)
+    {
+      parseAlo->logException(shared_ptr<ParseError>(new ParseError(".endentry name does not match first entry at label ...",
+								   get_src_line(), 
+								   get_src_file(), 
+								   __LINE__, 
+								   __FILE__)));
+    }
+
+  LlirOctaveBlock::ParentListIterator pli;
+  
+  pli = g_currentAltEntryFn->getImplicitBlock()->getParent();
+
+  g_currentBlock = pli->second;  
+
+  shared_ptr<EndEntryDirective> endEntry = llirFactory->createEndEntryDirective(get_node_line(), 
+										get_src_line(),
+										get_src_file(), name);
+
+  g_currentBlock->addLlirNode(g_currentBlock, endEntry);
+
+  g_currentAltEntryFnEnd = endEntry;
+
+  in_entry = false;
+}
+
+
+
+/*
+  Function To be called when a .evh/.entry directive is seen
+*/
+
+void
+gcc_init_function(shared_ptr<const AltEntryFunction> e)
+{
+
+#ifdef GCCBUILD
+
+  if (optimizing)
+    {
+      //per evh/function compute these lists.
+
+      unsigned int argRegs[64];
+      unsigned int resultRegs[64];
+      unsigned int scratchRegs[64];
+      unsigned int linkRegs[64];
+    
+      for(unsigned int i=0; i<= 63; i++)
+	{
+	  argRegs[i] = 0;
+	  resultRegs[i] =0;
+	  scratchRegs[i] =0;
+	  linkRegs[i] =0;
+	}
+
+      //callUsedRegs?
+      //Note: User should take care not to include 
+      //callUsedRegs as a part of scratch list.
+
+      for(unsigned int regNum = 0; regNum <= 63; regNum++)
+	{
+
+	  if(e->getArgList()->getRegList()->isInList(regNum))
+	    {
+	      argRegs[regNum] = 1;
+	    }
+
+	  if(e->getResultList()->getRegList()->isInList(regNum))
+	    {
+	      resultRegs[regNum] = 1 ;
+	    }
+
+	  if(e->getScratchList()->getRegList()->isInList(regNum))
+	    {
+	      scratchRegs[regNum] = 1 ;
+	    }
+	}
+
+
+      //it is assumed that same register is not repeated
+      //in different @linked keywords, semantic visitor
+      //should ensure this assumption is true;
+      for(unsigned int i=0; i<= 63; i++)
+	{
+	  if(e->getRegLnksListToSPRAM()->isInList(i) ||
+	     e->getRegLnksListToLockedSPRAM()->isInList(i) ||
+	     e->getRegLnksListToSRAM()->isInList(i) ||
+	     e->getRegLnksListToSDRAM()->isInList(i) ||
+	     e->getRegLnksListToCCRAM()->isInList(i) ||
+	     e->getRegLnksListToLockedCCRAM()->isInList(i) ||
+	     e->getRegLnksListToSIO()->isInList(i))
+	    {
+	      linkRegs[i] = i;
+	    }
+	}
+
+    
+
+      shared_ptr<const LabelList> entryPtList = e->getEntryPtList();
+
+      const string evhName = entryPtList->getLabel(0)->getName();
+
+      //call this routine once per evh/function.
+      gcc_init_entry(evhName.c_str(), argRegs, resultRegs, scratchRegs, linkRegs);
+    }
+
+#endif
+
+}
+
+/*
+  Function to be called when .endevh/.endentry directive is seen
+*/
+
+void gcc_finish_function()
+{
+
+#ifdef GCCBUILD
+
+  if (optimizing)
+    {
+      //update it to not fix function names.
+      fixLabelOperands(g_currentAltEntryFn->getImplicitBlock());
+
+      shared_ptr<const LabelList> entryPtList = g_currentAltEntryFn->getEntryPtList();
+
+
+      // info to be passed to visitors for
+      // for correct error reporting.
+
+      parseAlo->analyzeSemantics(g_currentAltEntryFn);
+      
+      parseAlo->markSequenceInsns(g_currentAltEntryFn->getImplicitBlock());
+
+      parseAlo->analyzeCurrentFunction(g_currentAltEntryFn);
+      
+      parseAlo->handleLoggedExceptions();
+  
+      if(parseAlo->getNumErrors() == 0)
+	{
+	  //print .i2 file
+	  parseAlo->printAssemblyFile(g_currentFile);
+	  
+	  //identify all branch labels to be emitted as label_ref's
+	  parseAlo->identifyBranchTargets(g_currentAltEntryFn);
+	  
+	  //identify all branch labels to be emitted as symbol_ref's
+	  parseAlo->identifyCallTargets(g_currentAltEntryFn);
+
+	  //identify all live ESS registers for correct RTL generation
+	  parseAlo->identifyLiveEssRegisters(g_currentAltEntryFn);
+	  
+	  //generate RTL for evh/entry 'name'
+	  gcc_emit_global_asm_directive("\n");
+	  parseAlo->generateRTL(g_rootBlock);
+	  gcc_emit_global_asm_directive("\n");
+
+	}
+      else
+	{
+	  fatal_error("Optimization aborting due to earlier errors...");
+	}
+      
+      parseAlo->handleLoggedExceptions();
+      
+      if(parseAlo->getNumErrors() != 0)
+	{ 
+	  fatal_error("Optimization aborting due to earlier errors...");
+	}
+	  
+
+      gcc_end_entry();
+    }
+
+#endif
+
+}
+
+

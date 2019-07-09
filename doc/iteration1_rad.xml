@@ -1,0 +1,205 @@
+<?xml version='1.0'?>
+<!DOCTYPE article PUBLIC "-//OASIS//DTD DocBook XML V4.1.2//EN"
+       "/usr/share/sgml/docbook/xml-dtd-4.1.2/docbookx.dtd" >
+
+<!-- "http://www.oasis-open.org/docbook/xml/4.0/docbookx.dtd" -->
+
+
+<article>
+  <title>ALO Interation #1 RADIT</title>
+  
+  <articleinfo>
+    <authorgroup>
+      <author>
+	<firstname>Jamie</firstname><surname>Guinan</surname>
+      </author>
+      <collab>
+	<collabname>David Presberg</collabname>
+      </collab>
+    </authorgroup>
+
+    <abstract>
+      <para>
+	$Id: iteration1_rad.xml,v 1.2 2002/03/28 17:18:37 guinanjs Exp $
+      </para>
+    </abstract>
+
+  </articleinfo>
+
+  <section>
+    <title>Overview</title>
+    <para>
+      This document captures the Requirements, Analysis, Design,
+      Implementation and Test phases of the development of the first
+      iteration of the ALO.  This document has a limited scope and
+      lifetime - it applies only to iteration #1 of the ALO.  There
+      exists separate, much more complete documentation for ALO
+      project elsewhere.
+    </para>
+  </section>
+  
+  <section id="REQUIREMENTS">
+    <title>Requirements</title>
+    <para>
+      At a high level, iteration #1 of the ALO is expected to do the following:
+      <itemizedlist>
+	<listitem>
+	  <para>
+	    Parse the current assembly language.	  
+	  </para>
+	</listitem>
+	<listitem>
+	  <para>
+	    Digest 100% of the Portmaker2 source code.
+	  </para>
+	</listitem>
+	<listitem>
+	  <para>
+	    Perform 'printf' output for debugging and validation. 
+	    It must emit output suitable for feeding to the "mxtas" 
+	    assembler.
+	  </para>
+	</listitem>
+      </itemizedlist>
+    </para>
+
+    <para>
+      It is also worth noting what iteration #1 is explicitly <emphasis>not</emphasis>
+      required to do the following:
+      <itemizedlist>
+	<listitem>
+	  <para>
+	    Name lookups for labels, structure instances, or other named objects.
+	  </para>
+	</listitem>
+      </itemizedlist>
+    </para>
+
+
+  </section>
+
+  <section>
+    <title>Analysis</title>
+    <para>
+      We decided to use flex<footnote><para>
+
+	  flex(1) is a <quote>fast</quote> lexical analyzer generator,
+	  backward-compatible with lex.
+
+	</para></footnote>
+      and bison<footnote><para>
+
+	  bison(see info page) is a GNU program, backward-compatible
+	  with yacc, with many additional features.
+
+	</para></footnote>
+
+      to implement the lexer and parser respectively, for several
+      reasons:
+
+      <itemizedlist>
+	<listitem>
+	  <para>
+	    They are the <quote>standard</quote> lexing/parsing tools in the Unix
+	    domain.
+	  </para>
+	</listitem>
+
+	<listitem>
+	  <para>
+	    The grammar for the existing assembler, which we are using
+	    as a reference, uses the same tools.
+	  </para>
+	</listitem>
+      </itemizedlist>
+    </para>
+
+    <para>
+      I would have liked to have used objects on the parser stack, by
+      having YYSTYPE be a pointer to some base type and deriving types
+      for all of the semantic objects, from directives to flag sets.
+      But it turns out that in the generated .tab.c code, there are
+      several places where the semantic type stack is manipulated, and
+      there is no "hook" to catch when objects are popped from the
+      stack, so the parser would never get a chance to clean up the
+      objects, and thus leak profusely.
+    </para>
+
+  </section>
+
+
+  <section>
+    <title>Design</title>
+    <para>
+      The uses flex and bison dictates the main control flow of the
+      ALO front-end.  The function <function>yyparse()</function> is
+      the only entry point, and the grammar actions are taken when
+      the rule matches.      
+    </para>
+
+    <para>
+      One important design decision that is independent of flex/bison
+      usage is how to interface to the next stage of the ALO.  While
+      iteration #1 is concerned with generating <quote>printf</quote>
+      output, later iterations will be calling code to generate the
+      LLIL intermediate language.  We would like for that API boundary
+      to be identical between iterations, so the API is written as a
+      series of functions with names like
+      <function>do_add()</function> for an add instruction, or
+      <function>do_structure()</function> for a .structure directive.
+      The arguments to the function will consist of pointers to
+      objects representing the arguments of the instruction or
+      directive.
+    </para>
+
+    
+  </section>
+    
+  <section>
+    <title>Implementation</title>
+    <para>
+      The lexer and parser are described using the respective syntax
+      of flex and bison.  The remainder of the ALO front-end is
+      implemented in C.
+    </para>
+  </section>
+
+  <section>
+    <title>Test</title>
+
+    <!-- Pres, insert text here.   Use <para> start/end tags to wrap paragraphs. -->
+    <para>
+      Initial testing to verify that the correct flex and bison
+      specifications are being used will make use of one or more
+      Portmaker II source files (existing `.s' files).  Early on, in
+      the development of ALO Iteration #1, unit testing can be done in
+      part for the lexer by passing Portmaker II source and verifying
+      that no token is rejected.  Later testing (it isn't clear if
+      this would be `unit testing' or `early system testing' of
+      Iteration #1) would use both the lexer and the parser, and would
+      verify first that no Portmaker II statement (including
+      all-comment statements) is rejected.  The final test of this
+      iteration would again, use Portmaker II source for input, but in
+      this case, the complete set of Portmaker II source files.  It
+      would verify that the 'printf' output, as discussed in the
+      <link linkend="REQUIREMENTS">Requirements</link> section,
+      <!-- Jamie: can I make that above a true `cross reference'?
+           (Done. -JSG ) -->
+      yields assembler source:
+      <itemizedlist>
+	<listitem><para>that is acceptable input to "mxtas" without
+	    error-reports from "mxtas",</para></listitem>
+	<listitem><para>assembles and links to a complete Portmaker II
+	    product executable, using "mxtas" and the `make'
+	    invocation for one PM II configuration, for instance AAL5
+	    Bidir, and</para></listitem>
+	<listitem><para>that executable can be run, e.g., in
+	    simulation, in the context of Cory Sakakeeny's `pmhost'
+	    driver (aka CoryWare).</para></listitem>
+      </itemizedlist>
+    </para>
+
+
+  </section>
+</article>
+

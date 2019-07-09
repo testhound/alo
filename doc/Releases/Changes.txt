@@ -1,0 +1,146 @@
+Major Changes Made to ALO 
+=========================
+
+This document captures major changes made to ALO during the
+course of day to day development between interim releases.
+The intent of this document is to capture significant changes
+and bug fixes which lead to next the release. This can be
+used to write better Release notes.
+
+--------------------------------------------------------------
+Last Release: Thu, 27 Feb 2003 12:58:10 -0500 (EST)
+Binaries:     /usr/local/maker/swtools/tsptools-0.9-pre1/
+--------------------------------------------------------------
+
+Jamie Guinan
+
+  
+  - Added new functionality to track and buffer lexter
+    tokens for better context sensitive error reporting 
+    using yyerror() during parsing.
+	
+	track_token()
+	buffered_tokens_to_string()
+	yyerror()
+
+  - Add "-fstrict-aliasing" to cc1alo args when "-O*" is present.
+
+  - Remove getopt stuff and the libiberty tree.
+
+  - Major rework of grammar files and refactoring of m480 and m470 
+    grammar rules and move optimization specific code into seperate 
+    files.
+
+
+
+Michael Collison
+
+
+  - Associate alias information to memory operands.
+
+    Add memory alias information to memory operands. 
+    The goal of this change is to inform the optimizer 
+    that acceses to different memory regions do not
+    conflict.
+
+  - Bug Fix:
+
+    Define HARD_FRAME_POINTER_REGNUM to be TFP_REGNUM (145) 
+    instead of register 39
+
+  - Major Bug Fix: (Improves flow info computation)
+
+    Remove "prologue" and "epiloge" patterns from m480.md. 
+    Their presence affects the calculation of live register information.
+
+    New macros to m480.c in place of those patterns.
+
+        #define TARGET_ASM_FUNCTION_PROLOGUE m480_output_function_prologue
+	#define TARGET_ASM_FUNCTION_EPILOGUE m480_output_function_epiloge
+
+
+Kiran Kumar
+
+
+  - Fix attributes on all the Add & Sub carry branch insn patterns 
+    from 'branch' to 'alo2opbranch'
+
+  - Fix incorrect attributes set on "call" and "call_value" patterns
+
+  - Provide correct number of alternate attributes for "bi" and 
+    "br" insns.
+
+  - Remove unused attribute "length"
+
+  - Make sure that implicit direct branches to the exit label 
+    do not collect any delay slots. 
+
+    Now that we are generating implicit branches to the exit 
+    of the evh/function (which will not printed in the ouput 
+    assembly code and only needed to make a fully connected CFG)
+
+    Modify the 'define_delay' pattern for 'branch' attribute to 
+    indicate that if it is 'branch_after_brsl' it has no delay 
+    slots.
+
+  - Make changes to ifcvt.c
+
+    Ensure that GCC does not try to split linked memory function during
+    if conversion optimizations, thus generating un matchable insns.
+
+    Add a new check ((!simple_insn_p(insn_a)) to figure out if
+    the insn is a parallel containing multiple sets then return
+    without performing any optimization.
+
+  - Add a new SPL_ESS_REGS class and rewrite the special ESS condition
+    code checking patterns. The duplicate patterns have enormously
+    reduced with this strategy making generated 'recog' routines 
+    more debuggable.
+
+  - New 'return' insn generation mechansim
+
+    (a) Emit brsl insn as an unspec and an implicit branch to the
+        unique exit label end of event handler.
+    
+    (b) Emit all indirect returns using rpc as immediate branches
+        to the exit label. (All these new branches do not have
+        line notes generated for them.
+
+    (c) Generate epilouge code for the current .entry if return insn
+        using rpc is found in the code.
+ 
+    (d) Make sure only one return RPC register is used in the 
+	entire length of code.
+
+    (e) remove all redundant (return) patterns in the m480.md file.
+
+    (f) add mechanism in md file "bi" pattern to not emit the
+        branch insn to the assembly if it 'saw_brsl' insn before.
+
+  - Changed the code in rtlanal.c and added a new macro
+    MEM_ADDR_CAN_TRAP. The macro for m480 always returns 0.    
+    
+    In ALO we are comfortable with assuming that all 
+    memory references will be valid.  This changed enabled lot of 
+    optimizations in GCC.
+
+  - Handle hec5_br instruction as another carry branch instruction.
+    Fix incorrect md file patterns for hec5 insn.
+
+  
+Yakov Yazlovitsky
+
+
+      - comments in basic-block.h
+
+      
+
+
+
+
+
+
+
+
+
+

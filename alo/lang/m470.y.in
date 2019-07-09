@@ -1,0 +1,224 @@
+/* -*- mode:C -*-
+ * m470-specific file.  Syntax is identical to standard .y file, but
+ * each section is *combined* with the contents of the corresponding 
+ * section in alolang.y.in .
+ */
+
+%{
+/* C (and C++ in our case) #include's and declarations */
+
+/* Block-oriented semantic enforcement */
+enum BlockThing { NONE_BLOCK, BLOCK_BLOCK };
+static map<int, const char *> block_thing_names;
+static stack<BlockThing> nesting_stack;
+
+static inline void parse_begin_hook()
+{
+  block_thing_names[NONE_BLOCK] = "<NONE>";
+  block_thing_names[BLOCK_BLOCK] = ".block";
+}
+
+static inline void parse_done_hook()
+{
+  /* Empty. */
+}
+
+
+%}
+
+/* TOKENS */
+%token <ul_value> DIV_TOKEN
+%token <ul_value> DIVI_TOKEN
+%token <ul_value> GETC_TOKEN
+%token <ul_value> PUT_TOKEN
+%token <ul_value> PUTC_TOKEN
+
+%type <text> dot_expr
+
+%union
+{
+  unsigned long ul_value;
+  long l_value;
+  char *text;
+  OptionalModAbcContainer *opt_mod_abc;
+  OptionalAbcContainer *opt_abc;
+  OptionalDepbFlagContainer *opt_depb;
+  OptionalSignFlagContainer *opt_sign;
+  OptionalCycsFlagContainer *opt_cycs;
+  OptionalBranchDispContainer *opt_branch_disp;
+  OptionalBranchDispWithAbcContainer* opt_branch_disp_abc;
+  OptionalHecFlagContainer *opt_hec;
+  OptionalSxFlagContainer *opt_sx;
+  OptionalDiFlagContainer *opt_di;
+  OptionalRegContainer *opt_reg;
+  OptionalAbcCompareSignContainer *opt_abc_compare_sign;
+  OptionalAbcZbitContainer *opt_abc_zb;
+  OptionalNumBitsContainer *opt_numbits;
+  OptionalModAbcCompareContainer *opt_mod_abc_compare;
+  OptionalLnkFlagContainer *opt_lnk;
+  RegContainer *reg;
+  OctaveInsnContainer *insn;
+  ExpContainer *ex;
+  OptionalPipeDepthContainer *pipedepth;
+  CondBranchFlagsContainer *cbflags;
+  TrafficSchedFlagsContainer *tssflags;
+  ImmedBranchArgsContainer *bi_args;
+  BrslArgsContainer *brsl_args;
+  EssContainer *ess;
+  MultiRegArgsContainer *multireg_args;
+  SmmArgsContainer *smm_args;
+  BitopArgsContainer *bitop_args;
+  DepbiArgsContainer *depbi_args;
+  TestArgsContainer *test_args;
+  ParseConstruct parse_construct;
+  StructContainer *dot_struct;
+  TypeContainer *type;
+
+  OctaveFactory::Ess of_ess;
+  OctaveFactory::Mod of_mod;
+  OctaveFactory::Mvh of_mvh;
+
+  RegListContainer     *reg_lst;
+  RegListContainer     *args_lst;
+  RegListContainer     *res_lst;
+  RegListContainer     *sc_lst;
+
+}
+
+%%
+/* Grammar rules.  */
+instruction: processor_instruction  
+             {
+	       g_currentBlock->addLlirNode(g_currentBlock, $1->insnPtr);
+             }
+          ;
+
+
+processor_instruction: generic_processor_instruction
+                     {
+                     }
+
+                     /* 470-specific instructions... */
+                     | DIV_TOKEN single_reg_spec single_reg_spec single_reg_spec optional_sx_flag newline {
+		       NEW(OctaveInsnContainer, p);
+		       p->insnPtr = llirFactory->createDivInstruction(get_node_line(), 
+								      get_src_line(),
+								      get_src_file(), $2->regPtr, $3->regPtr, $4->regPtr,
+								       $5->sx_flag);
+		       $$ = p;
+		       }
+                     | DIV_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | DIVI_TOKEN single_reg_spec imm10 single_reg_spec optional_sx_flag newline {
+		       NEW(OctaveInsnContainer, p);
+		       p->insnPtr = llirFactory->createDiviInstruction(get_node_line(), 
+								       get_src_line(),
+								       get_src_file(), $2->regPtr, container_to_simm_ptr($3),
+								       $4->regPtr, $5->sx_flag);
+		       $$ = p;
+		       }
+                     | DIVI_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | GETC_TOKEN param_offset pos_offset traffic_sched_flags newline {
+                       NEW(OctaveInsnContainer, p);
+                       p->insnPtr = llirFactory->createGetcInstruction(get_node_line(), 
+								       get_src_line(),
+								       get_src_file(), 
+								       container_to_uimm_ptr($2), 
+								       container_to_uimm_ptr($3), 
+								       $4->flags);
+                       $$ = p; 
+		       }
+                     | GETC_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | PUT_TOKEN single_reg_spec single_reg_spec traffic_sched_flags newline {
+		       NEW(OctaveInsnContainer, p);
+		       p->insnPtr = llirFactory->createPutInstruction(get_node_line(), 
+								      get_src_line(),
+								      get_src_file(), $2->regPtr, $3->regPtr, $4->flags);
+		       $$ = p; 
+		       }
+                     | PUT_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     | PUTC_TOKEN param_offset pos_offset optional_pipe_depth traffic_sched_flags newline {
+                       NEW(OctaveInsnContainer, p);
+                       p->insnPtr = llirFactory->createPutcInstruction(get_node_line(), 
+								       get_src_line(),
+								       get_src_file(),
+                                                                       container_to_uimm_ptr($2), 
+                                                                       container_to_uimm_ptr($3),
+                                                                       $4->pipe_depth,
+                                                                       $5->flags);
+                       $$ = p; 
+                       }
+                     | PUTC_TOKEN error newline
+                       {
+			 NEW (OctaveInsnContainer, p);
+
+			 p->insnPtr = llirFactory->createNullInstruction(get_node_line(), 
+									 get_src_line(),
+									 get_src_file());
+			 $$ = p;
+		       }
+                     ;
+
+assembler_directive : top_level_structure_definition 
+                      { 
+                      }
+                    | generic_assembler_directive
+		      {
+		      }
+
+	            /* The rest of these (none currently for m470) are machine-specific... */
+                    ;
+
+
+/* "." in the context of expressions. */
+dot_expr: DOT_TOKEN
+     {
+       static char dot_string[64] = ".";
+       $$ = dot_string;
+     }
+     ;
+
+%%
+/* Supporting C code. */
+
+
+
+
+
+
+
+
+
+
+

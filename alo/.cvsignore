@@ -1,0 +1,11 @@
+*.tab.h
+*.tab.c
+*.yy.c
+*_keywords.c
+.cvsignore
+src_doc
+lexer_test
+*.d
+i386-linux-cx27470
+i386-linux-m27480
+.nfs*

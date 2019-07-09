@@ -1,0 +1,269 @@
+ Description of Automatic Memory Update mechansim of 
+ M27480 Arithmetic Instructions to GCC.
+ ---------------------------------------------------
+  
+ All ALU instructions in M27480 can trigger automatic 
+ memory updates to linked registers. All automatic 
+ memory updates are performed as 32-bit writes. 
+ Linking registers can offer substantial improvements in 
+ firmware performance by eliminating the need for 
+ special update instructions. 
+
+ For example from the moment a software register is linked
+ to a memory location (by a link associating instruction
+ speicified later in this document) any modifications to 
+ the contents of that register by means of any arithmetic
+ instruction causes that memory location to be updated with 
+ the most recently changed value of the register.
+ 
+ The M27480 can support three concurrent links, which means
+ that any point three specific base memory locations can be
+ be remembered by the hardware as linked memory regions. The 
+ offset of memory location at this base into which an
+ updated value is loaded is dependent on the register (its
+ register number being from one of 0 to 64) being linked.
+
+ Each of the general purpose registers, with the exception 
+ of R63, has a 2-bit state field that indicates the 
+ following information.
+
+ State(2bit)	Definition
+ -----------	-----------
+ 00		Register is not implicitly linked 
+ 01		Register is implicitly linked to Link Register #1 
+ 10		Register is implicitly linked to Link Register #2 
+ 11		Register is implicitly linked to Link Register #3 
+
+ A register always remembers only its most recent link; 
+ once a register is linked, any modifications to it will 
+ automatically spawn an automatic memory update. 
+
+
+ Linking registers
+ ------------------
+ 
+ A register can be linked with either an LMM instruction 
+ that specifies a LNK1, LNK2, or LNK3 option or with a 
+ LINK instruction. 
+
+ A LINK instruction can be used if the programmer wishes to link 
+ one or more registers without performing a load. Otherwise, 
+ the LMM instruction can be used to save an explicit 
+ LINK instruction. 
+
+ The link field is a two bit-field that is filled in by the assembler 
+ based on the following mnemonics. Once a register has been linked, 
+ it must be explicitly unlinked. 
+
+ LinkFld(2bit)	Mnemonic - Definition 
+ -------------- ---------------------
+ 00		blank (no link option specified) 
+ 01		LNK1 - Load Link Reg #1 and link one or more regs to it. 
+ 10		LNK2 - Load Link Reg #2 and link one or more regs to it. 
+ 11		LNK3 - Load Link Reg #3 and link one or more regs to it.
+
+ Unlinking Implicitly Linked Registers 
+ -------------------------------------
+
+ A register can be unlinked with either an LMM instruction 
+ that does not specify a LNK option or an UNLINK instruction. 
+
+ An UNLINK instruction can be used if the programmer wishes to  
+ unlink one or more registers without performing a load. 
+
+ Otherwise, the LMM instruction can be used to save an 
+ explicit UNLINK instruction. 
+
+ Computing Automatic Update Address
+ ----------------------------------
+
+ In order to do a memory update to a linked location, 
+ the M27480 Octave processor must compute the address 
+ represented by the implicit link each time an 
+ implicitly linked register is accessed. 
+ The 32-bit word address is computed as follows: 
+
+ linked_address[31:2] = (base_adrs[31:2] + (reg number of linked register))
+
+ Cautions and Red Flags
+ ----------------------
+
+ There are only few cautions concerning the use of linked registers:   
+
+ - A register linked to a data structure cannot be re-used as scratch 
+   space unless it is explicitly unlinked.   
+ 
+ - Links to off-chip memory have an effect on memory bus traffic. 
+ 
+ - If links are inadvertently left in place, bus traffic is increased 
+   unnecessarily.
+
+
+ Usage Model
+ -----------
+ 
+ The f/w programmer specifies that a register has to be linked
+ using LINK/LMM instruction.
+
+ link rd1-rdN rsb		  LNK1|LNK2|LNK3
+ link rd1-rdN simm(rsb)	  LNK1|LNK2|LNK3
+ link rd1-rdN BASE2|BASE3 uimm LNK1|LNK2|LNK3
+
+ 
+ In each of the above instructions the address of 'base' memory
+ location which will be remebered by Octave processor as
+ a special linked memory location is computed as follows.
+
+ (rsb)  -  reg_num(rd1) * 4
+ (rsb)  + simm - reg_num(rd1) * 4
+ BASE2  + uimm + reg_num(rd1) * 4
+ BASE3  + uimm + reg_num(rd1) * 4
+
+ Once this address is computed depending on which ever link
+ flag is specified as LNK1/LNK2/LNK3 the corresponding 
+ hardware link register is loaded with the above computed
+ address.
+
+ From then on if any register in the range including rd1 to rdN
+ is updated by an arithmetic instruction the corresponding
+ memory location is updated.
+  
+ For example when the following code is executed by octave
+ processor
+ 
+    link rd5-rd12 rsb LNK2
+    add  r1 r2 r7
+
+ After executing the first instruction the hardware
+ associates the address (rsb) - 5 * 4 
+ to the link register LNK2. At the same time
+ the hardware also sets state bits on the registers
+ r5 through r12 saying that they are linked
+ to memory whose base location is specified in LNK2.
+ Assuming rsb has address 0x1020 then
+ LNK2 is loaded with address 0x1000.
+
+ From then on whenever any arithmetic instruction is
+ executed as above which modifies any register from 
+ r5 to r12 an automatic memory update happens implicitly.
+
+ In the above case an update happens to the address
+ LNK2 + 7 * 4. Where 7 is the register number of the
+ linked destination register in the arithmetic instruction.
+
+ The above instruction causes an automatic update to
+ the location 0x1028.
+
+
+ Similarly an LMM instruction can be used to specify 
+ links and load LNK1/LNK2/LNK3 register and setting
+ state on registers to be linked registers. When these
+ optional link flags are omitted in the instruction 
+ the destination registers being used in the LMM instruction
+ are implicity unlinked. We can also use UNLINK 
+ instruction to clear the state bits on the registers
+ and explicitly unlink them.
+    
+
+  ------------------------------------------------
+  Importance of Linked register information to GCC
+  ------------------------------------------------
+
+  It is very important for GCC to understand this special
+  feature of Octave hardware for generating semantically
+  correct programs during optimization.
+
+  Reason being the fact that LINK and LMM instructions create 
+  links to memory and can cause automatic memory updates
+  create implict true dependencies in the program flow,
+  which are not easily comprehensible by normal data flow
+  analysis by looking at the source and destination operands
+  of instructions.
+
+  Consider the following case
+  --------------------------------  
+    .... some code ....
+
+  1.   lil  rsa lo16(mem_loc)
+
+  2.   laih rsa hi16(mem_loc)
+
+  3.   link r5-r5 rsa LNK3
+
+  4.   add r22 r33 r4
+
+  5.   addi rsa 20 rsb
+
+  6.   lmm r15 rsb
+
+     .... some other code ....
+  --------------------------------  
+
+
+  In the above code firt two instruction set up rsa
+  with address of 'mem_loc' and the next associates
+  stores the base address (mem_loc - 20) in LNK3 
+  register and at the same associates r5 to be 
+  implicitly linked to that address.
+
+  Instruction 4 causes a memory update and instruction
+  5 and 6 read the updated memory location contents into
+  r15.
+
+  As can be seen instruction sequences 4 and 5,6 are not
+  related by data flow. So GCC is free to move them
+  around treating them as completely independent
+  instructions. It would be incorrect to move 5,6 
+  before 4 because that would cause incorrect result to
+  be read from memory loaction rsa+20 into r15. 
+  That would be an incorrect transformation/optimization 
+  by GCC.
+
+  Hence this implicit linking behaviour of the hardware
+  has to be made explicit to GCC in the instruction
+  description.
+  
+
+  Representation of Automatic Update Memory Mechanism in Rtl
+  ----------------------------------------------------------
+
+    A link or an lmm with LNK flag is represented as follows.
+
+   link rd1-rdN rsa LNK1
+   ---------------------
+ 
+     (set (reg:SI LNK1) 
+	  (minus:SI (rsa) (regNO(rd1) * 4)))
+
+   lmm rd1-rdN rsa LNK2
+   --------------------
+
+      (parallel ...
+        (set (reg:SI rd1)
+             (mem:SI (rsa)  + 0*4))  
+         ...
+         ...
+	 (set (reg:SI rdN)
+	      (mem:SI (rsa) + N*4))
+
+         (set (reg:SI LNK2)
+	      (minus:SI (rsa) (regNO(rd1) * 4))))
+ 
+
+    Similarly if any arithmetic instruction which has rd1 through rdN
+    is used in any arithmetic instruction the it would be
+    represented as follows
+
+    xor r10 r12 rdX
+    ---------------
+
+       (parallel ...
+         (set (reg:SI rdx) 
+	    (xor:SI (reg:SI r10) (reg:SI r12)))
+	 (set (mem:SI (reg:SI LNK2))
+	    (xor:SI (reg:SI r10) (reg:SI r12))))
+
+
+
+
+   

@@ -1,0 +1,9 @@
+*.tab.h
+*.tab.c
+*.yy.c
+*_keywords.c
+.cvsignore
+src_doc
+lexer_test
+*.d
+.nfs*

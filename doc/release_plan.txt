@@ -1,0 +1,75 @@
+$Id: release_plan.txt,v 1.1 2002/03/28 17:21:15 guinanjs Exp $
+
+Each release of the ALO will have a unique version name.  The files
+that make up a release will be entirely contained within a single
+directory, with the ALO release version name encoded in the directory
+name.
+
+For example, the first iteration ALO release might be named,
+
+  alo-0.1.0
+
+Later releases might include,
+
+  alo-0.2.0
+  alo-0.3.0
+  alo-0.3.1
+  alo-0.3.2
+
+This naming scheme is used in most popular open source projects, as
+noted here,
+
+http://www.linuxdoc.org/HOWTO/Software-Release-Practice-HOWTO/naming.html
+
+and it has proven to be effective in that domain.  A project release
+name conists of the name of the package, a single dash, and a triplet
+of numbers separated by dots.  The numbers are distinct ordinal
+numbers, not decimal fractions.  Consider these two subsequent
+releases of ALO as an example,
+
+  alo-0.3.9
+  alo-0.3.10
+
+
+The directory path leading up to the alo release directory would
+include MAKER_ROOT, followed up a "packages" directory, and a
+hostcpu-os-version directory.  For example,
+
+  /usr/local/maker/packages/sparc-solaris-2.7/alo-x.y.z
+  /usr/local/maker/packages/i386-linux-rh7.2/alo-x.y.z
+
+Notice that the "packages" directory exists at the same level as the
+MAKER_REV directories, and roughly parallels their structure.  ALO
+releases are intentially and completely decoupled from MAKER_REV
+releases, although each MAKER_REV release would reference exactly one
+ALO release by creating a symbolic link to the corresponding ALO "bin"
+directory or ALO main executable.
+
+To use a particular version of ALO other than the one included in a
+MAKER_REV, one can adjust their shell path to include the desired ALO
+bin directory,
+
+  /usr/local/maker/packages/<hostcpu-os-version>/alo-0.1.1/bin
+
+or set a Make variable on the command line, for example,
+
+  make all EAS=/usr/local/maker/pacakges/<hostcpu-os-version/alo-0.1.1/bin/alo
+
+I don't recommend using environment variables (other than perhaps
+PATH) to select different versions of ALO, for several reasons:
+
+  1. It is easy to set environment variables and forget about them,
+     and this can lead to confusion when experimenting with different
+     versions of ALO (or any package).
+
+  2. When reporting a problem, the environment variable settings
+     become an integral part of the build process, but they are most
+     often not included as part of the report, making it impossible to
+     reproduce the problem condition without going back to the user
+     and asking about the environment (which might have changed since
+     the report was made).
+
+  3. It becomes another feature that has to be documented and
+     maintained.
+
+(end)
